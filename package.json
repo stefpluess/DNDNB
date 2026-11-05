@@ -1,0 +1,9 @@
+{
+  "name": "initiative-ledger",
+  "private": true,
+  "type": "module",
+  "description": "Front-end tests only. The app itself needs nothing from npm.",
+  "scripts": {
+    "test": "node --test \"js_tests/*.test.js\""
+  }
+}

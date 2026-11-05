@@ -1,0 +1,89 @@
+"""SQLite helpers. srd.db holds imported reference data; campaign.db holds your own characters and encounter."""
+import json
+import os
+import sqlite3
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(ROOT, "data")
+SRD_DB = os.path.join(DATA_DIR, "srd.db")
+CAMPAIGN_DB = os.path.join(DATA_DIR, "campaign.db")
+
+SRD_SCHEMA = """
+CREATE TABLE IF NOT EXISTS entries (
+    kind     TEXT NOT NULL,   -- monster | spell | equipment | magic-item | condition
+    idx      TEXT NOT NULL,   -- API index, e.g. 'goblin'
+    name     TEXT NOT NULL,
+    meta     TEXT,            -- one-line summary shown in search results
+    sort_key REAL DEFAULT 0,  -- CR for monsters, level for spells
+    data     TEXT NOT NULL,   -- full JSON from the source
+    PRIMARY KEY (kind, idx)
+);
+CREATE INDEX IF NOT EXISTS entries_name ON entries(kind, name);
+CREATE TABLE IF NOT EXISTS info (key TEXT PRIMARY KEY, value TEXT);
+"""
+
+CAMPAIGN_SCHEMA = """
+CREATE TABLE IF NOT EXISTS characters (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    name    TEXT NOT NULL,
+    data    TEXT NOT NULL,
+    updated TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS homebrew (
+    idx      TEXT PRIMARY KEY,   -- 'hb-...'
+    name     TEXT NOT NULL,
+    meta     TEXT,
+    sort_key REAL DEFAULT 0,
+    data     TEXT NOT NULL,
+    updated  TEXT DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+
+def connect(path):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def srd():
+    conn = connect(SRD_DB)
+    conn.executescript(SRD_SCHEMA)
+    return conn
+
+
+def campaign():
+    conn = connect(CAMPAIGN_DB)
+    conn.executescript(CAMPAIGN_SCHEMA)
+    return conn
+
+
+def dumps(obj):
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
+class _Session:
+    """`with db.srd_session() as conn:` commits on success, rolls back on error, always closes."""
+
+    def __init__(self, factory):
+        self.conn = factory()
+
+    def __enter__(self):
+        return self.conn
+
+    def __exit__(self, exc_type, *_):
+        if exc_type is None:
+            self.conn.commit()
+        else:
+            self.conn.rollback()
+        self.conn.close()
+
+
+def srd_session():
+    return _Session(srd)
+
+
+def campaign_session():
+    return _Session(campaign)

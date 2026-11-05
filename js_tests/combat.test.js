@@ -1,0 +1,189 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import * as R from '../static/js/combat.js';
+
+let n = 0;
+function mk(o = {}) {
+  n++;
+  return { id: `c${n}`, name: `C${n}`, kind: 'foe', init: 10, mod: 0, seq: n, ac: 12, hp: 10, max: 10, temp: 0, exh: 0,
+    conds: [], slots: [], ds: { s: 0, f: 0 }, notes: '', ...o };
+}
+/** A fight with the given combatants; `chars` are linked character sheets by id. */
+function fight(cs, chars = {}) {
+  const enc = { round: 1, active: null, skip: true, c: cs, ticks: [] };
+  return { enc, linked: c => (c.charId && chars[c.charId]) || null };
+}
+const names = ctx => R.sorted(ctx.enc).map(c => c.name);
+const activeName = ctx => ctx.enc.c.find(c => c.id === ctx.enc.active)?.name;
+
+// ---------- hit points ----------
+
+test('temp HP absorbs damage first', () => {
+  const c = mk({ temp: 5 }), ctx = fight([c]);
+  R.damage(ctx, c, 8);
+  assert.deepEqual([c.temp, c.hp], [0, 7]);
+});
+
+test('concentration DC is 10 or half the damage, capped at 30', () => {
+  assert.equal(R.concentrationDC(7), 10);
+  assert.equal(R.concentrationDC(31), 15);
+  assert.equal(R.concentrationDC(200), 30);
+  const c = mk({ hp: 50, max: 50, conds: [{ n: 'Concentrating', d: null }] }), ctx = fight([c]);
+  assert.match(R.damage(ctx, c, 24).join(' '), /DC 12/);
+});
+
+test('a PC at 0 HP falls unconscious and loses concentration', () => {
+  const c = mk({ kind: 'pc', conds: [{ n: 'Concentrating', d: null }] }), ctx = fight([c]);
+  const msgs = R.damage(ctx, c, 12);
+  assert.equal(c.hp, 0);
+  assert.deepEqual(c.conds.map(x => x.n), ['Unconscious']);
+  assert.match(msgs.join(' '), /Concentration lost/);
+});
+
+test('massive damage kills outright', () => {
+  const c = mk({ kind: 'pc', hp: 5, max: 10 }), ctx = fight([c]);
+  assert.match(R.damage(ctx, c, 15).join(' '), /dies outright/);   // 10 left over after reaching 0 = max HP
+  const d = mk({ kind: 'pc', hp: 5, max: 10 });
+  assert.doesNotMatch(R.damage(fight([d]), d, 14).join(' '), /dies outright/);
+});
+
+test('damage at 0 HP: one failure, two from a critical hit', () => {
+  const c = mk({ kind: 'pc', hp: 0 }), ctx = fight([c]);
+  R.damage(ctx, c, 3);
+  assert.equal(c.ds.f, 1);
+  R.damage(ctx, c, 3, true);
+  assert.equal(c.ds.f, 3);
+});
+
+test('healing from 0 resets death saves and removes Unconscious', () => {
+  const c = mk({ kind: 'pc', hp: 0, ds: { s: 2, f: 1 }, conds: [{ n: 'Unconscious', d: null }] }), ctx = fight([c]);
+  R.heal(ctx, c, 4);
+  assert.deepEqual([c.hp, c.ds, c.conds], [4, { s: 0, f: 0 }, []]);
+  R.heal(ctx, c, 100);
+  assert.equal(c.hp, 10);
+});
+
+test("temp HP doesn't stack", () => {
+  const c = mk({ temp: 6 }), ctx = fight([c]);
+  assert.equal(R.giveTemp(ctx, c, 4).length, 1);
+  assert.equal(c.temp, 6);
+  R.giveTemp(ctx, c, 9);
+  assert.equal(c.temp, 9);
+});
+
+// ---------- death saves ----------
+
+test('death saves follow the 2024 rules', () => {
+  const pc = () => mk({ kind: 'pc', hp: 0 });
+  let c = pc(); R.deathSave(fight([c]), c, 10); assert.deepEqual(c.ds, { s: 1, f: 0 });
+  c = pc(); R.deathSave(fight([c]), c, 9); assert.deepEqual(c.ds, { s: 0, f: 1 });
+  c = pc(); R.deathSave(fight([c]), c, 1); assert.deepEqual(c.ds, { s: 0, f: 2 });
+  c = pc(); const r = R.deathSave(fight([c]), c, 20); assert.equal(c.hp, 1); assert.equal(r.cls, 'crit');
+});
+
+test('exhaustion lowers death saves, but a natural 20 still counts', () => {
+  const c = mk({ kind: 'pc', hp: 0, exh: 1 }), ctx = fight([c]);
+  const r = R.deathSave(ctx, c, 11);               // 11 − 2 = 9: a failure
+  assert.equal(r.total, 9);
+  assert.deepEqual(c.ds, { s: 0, f: 1 });
+});
+
+test('three successes means stable, three failures means dead', () => {
+  const c = mk({ kind: 'pc', hp: 0, ds: { s: 2, f: 2 } }), ctx = fight([c]);
+  assert.match(R.deathSave(ctx, c, 15).msgs[0], /stable/);
+  const d = mk({ kind: 'pc', hp: 0, ds: { s: 0, f: 2 } });
+  assert.match(R.deathSave(fight([d]), d, 5).msgs[0], /died/);
+});
+
+// ---------- linked PCs ----------
+
+test('a linked PC reads and writes HP and exhaustion on its sheet', () => {
+  const ch = { sheet: { name: 'Brakka', hp: 20, max_hp: 30, temp_hp: 0, exhaustion: 0, slots: [] }, derived: { ac: 18 } };
+  const c = mk({ kind: 'pc', charId: 7, hp: 999 }), ctx = fight([c], { 7: ch });
+  assert.equal(R.vit(ctx, c).ac, 18);
+  R.damage(ctx, c, 5);
+  assert.equal(ch.sheet.hp, 15);
+  assert.equal(c.hp, 999);                          // the combatant's own copy is untouched
+  R.addCondition(ctx, c, 'Exhaustion');
+  assert.equal(ch.sheet.exhaustion, 1);
+});
+
+// ---------- turns ----------
+
+test('turns go in initiative order and wrap into the next round', () => {
+  const ctx = fight([mk({ name: 'A', init: 5 }), mk({ name: 'B', init: 18 }), mk({ name: 'C', init: 12 })]);
+  assert.deepEqual(names(ctx), ['B', 'C', 'A']);
+  R.step(ctx, 1);
+  assert.equal(activeName(ctx), 'B');
+  R.step(ctx, 1); R.step(ctx, 1); R.step(ctx, 1);
+  assert.deepEqual([activeName(ctx), ctx.enc.round], ['B', 2]);
+  R.step(ctx, -1);
+  assert.deepEqual([activeName(ctx), ctx.enc.round], ['A', 1]);
+});
+
+test('ties go to the higher initiative modifier', () => {
+  const ctx = fight([mk({ name: 'slow', init: 12, mod: 0 }), mk({ name: 'quick', init: 12, mod: 3 })]);
+  assert.deepEqual(names(ctx), ['quick', 'slow']);
+});
+
+test('defeated foes are skipped, downed PCs are not', () => {
+  const ctx = fight([mk({ name: 'A', init: 20 }), mk({ name: 'dead', init: 15, hp: 0 }), mk({ name: 'pc', kind: 'pc', init: 10, hp: 0 })]);
+  R.step(ctx, 1); R.step(ctx, 1);
+  assert.equal(activeName(ctx), 'pc');
+});
+
+test('durations count down at the end of the turn, and Back restores them', () => {
+  const a = mk({ name: 'A', init: 20, conds: [{ n: 'Frightened', d: 1 }] });
+  const ctx = fight([a, mk({ name: 'B', init: 10 })]);
+  R.step(ctx, 1);
+  const msgs = R.step(ctx, 1);                       // A's turn ends: Frightened (1 round) ends
+  assert.deepEqual(a.conds, []);
+  assert.match(msgs.join(' '), /Frightened ended/);
+  R.step(ctx, -1);                                    // back to A: it returns
+  assert.deepEqual(a.conds, [{ n: 'Frightened', d: 1 }]);
+  R.step(ctx, 1);                                     // forward again: counted once, not twice
+  assert.deepEqual(a.conds, []);
+});
+
+test('removing the active creature passes the turn onward', () => {
+  const ctx = fight([mk({ name: 'A', init: 20 }), mk({ name: 'B', init: 15 }), mk({ name: 'C', init: 10 })]);
+  R.step(ctx, 1); R.step(ctx, 1);                     // B is active
+  R.removeCombatants(ctx, [ctx.enc.active]);
+  assert.deepEqual([activeName(ctx), ctx.enc.round], ['C', 1]);
+  R.removeCombatants(ctx, [ctx.enc.active]);          // removing the last in order wraps to a new round
+  assert.deepEqual([activeName(ctx), ctx.enc.round], ['A', 2]);
+  R.removeCombatants(ctx, [ctx.enc.active]);
+  assert.equal(ctx.enc.active, null);
+});
+
+// ---------- names ----------
+
+test('group names number creatures and never repeat a number', () => {
+  const ctx = fight([]);
+  const add = (base, k) => R.groupNames(ctx.enc, base, k).forEach(name => ctx.enc.c.push(mk({ name })));
+  add('Goblin', 1);
+  assert.deepEqual(ctx.enc.c.map(c => c.name), ['Goblin']);
+  add('Goblin', 2);
+  assert.deepEqual(ctx.enc.c.map(c => c.name), ['Goblin 1', 'Goblin 2', 'Goblin 3']);
+  ctx.enc.c = ctx.enc.c.filter(c => c.name !== 'Goblin 2');
+  add('Goblin', 1);
+  assert.deepEqual(ctx.enc.c.map(c => c.name).sort(), ['Goblin 1', 'Goblin 3', 'Goblin 4']);
+  assert.deepEqual(R.groupNames(ctx.enc, 'Ogre (Chief)', 1), ['Ogre (Chief)']);   // names with symbols are safe
+});
+
+// ---------- conditions and slots ----------
+
+test('adding a condition again resets its duration; Exhaustion stacks to 6', () => {
+  const c = mk(), ctx = fight([c]);
+  R.addCondition(ctx, c, 'Poisoned', 3);
+  R.addCondition(ctx, c, 'Poisoned', 1);
+  assert.deepEqual(c.conds, [{ n: 'Poisoned', d: 1 }]);
+  for (let i = 0; i < 7; i++) R.addCondition(ctx, c, 'Exhaustion');
+  assert.equal(c.exh, 6);
+});
+
+test('slot pips spend and restore', () => {
+  const s = { max: 3, used: 0 };
+  R.toggleSlot(s, 0); assert.equal(s.used, 1);
+  R.toggleSlot(s, 2); assert.equal(s.used, 0);       // pip 2 was spent: restore
+});
