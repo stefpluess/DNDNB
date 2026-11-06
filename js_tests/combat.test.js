@@ -170,6 +170,49 @@ test('Exhaustion 6 kills', () => {
   assert.equal(R.lifeState(ctx, c), 'dead');
 });
 
+test('defenses are read from the stat block', () => {
+  const d = R.monsterDefenses({ resistances_and_immunities: {
+    damage_resistances_display: 'Cold, Fire', damage_vulnerabilities_display: 'Radiant',
+    damage_immunities_display: 'Poison; Charmed, Poisoned', condition_immunities_display: '' } });
+  assert.deepEqual(d, { resist: ['cold', 'fire'], vuln: ['radiant'], immune: ['poison'], condImmune: ['charmed', 'poisoned'] });
+  // structured lists count too
+  assert.deepEqual(R.monsterDefenses({ resistances_and_immunities: { damage_immunities: [{ name: 'Fire' }], condition_immunities: [{ name: 'Frightened' }] } }),
+    { resist: [], vuln: [], immune: ['fire'], condImmune: ['frightened'] });
+  // qualified (2014-style) text is left to the DM
+  const q = R.monsterDefenses({ resistances_and_immunities: { damage_resistances_display: 'Bludgeoning, Piercing, and Slashing from Nonmagical Attacks' } });
+  assert.deepEqual([q.resist, q.notes.length], [[], 1]);
+  assert.equal(R.monsterDefenses({ resistances_and_immunities: {} }), null);
+  assert.deepEqual(['fire', 'poison', 'radiant', 'acid', ''].map(t => R.defenseMod({ ...d, resist: ['fire', 'radiant'] }, t)),
+    ['resist', 'immune', 'resist+vuln', 'normal', 'normal']);
+  assert.equal(R.adjustDamage(11, { mod: 'resist+vuln' }), 10);
+  assert.equal(R.adjustDamage(11, { half: true, none: true }), 0);
+});
+
+test('a creature immune to a condition doesn\'t get it', () => {
+  const c = mk({ name: 'Zombie', def: { resist: [], vuln: [], immune: [], condImmune: ['poisoned', 'exhaustion'] } }), ctx = fight([c]);
+  assert.match(R.addCondition(ctx, c, 'Poisoned').join(' '), /immune to Poisoned/);
+  R.addCondition(ctx, c, 'Exhaustion');
+  assert.deepEqual([c.conds, c.exh], [[], 0]);
+  R.addCondition(ctx, c, 'Prone');
+  assert.deepEqual(c.conds.map(x => x.n), ['Prone']);
+});
+
+test('conditions make some saves fail automatically or roll with Disadvantage', () => {
+  const stunned = mk({ conds: [{ n: 'Stunned', d: null }] }), held = mk({ conds: [{ n: 'Restrained', d: null }] });
+  assert.deepEqual([R.saveRule(stunned, 'dex'), R.saveRule(stunned, 'str'), R.saveRule(stunned, 'wis')], [{ fail: 'Stunned' }, { fail: 'Stunned' }, {}]);
+  assert.deepEqual([R.saveRule(held, 'dex'), R.saveRule(held, 'str')], [{ dis: 'Restrained' }, {}]);
+  assert.deepEqual(R.rollSave({ dice: [20], bonus: 5, dc: 10, rule: { fail: 'Stunned' } }), { die: null, total: null, ok: false, auto: 'Stunned' });
+  assert.deepEqual(R.rollSave({ dice: [18, 4], bonus: 2, dc: 10, rule: { dis: 'Restrained' } }), { die: 4, total: 6, ok: false, auto: null });
+  assert.equal(R.rollSave({ dice: [8], bonus: 2, dc: 10 }).ok, true);
+});
+
+test('grappled and charmed attackers', () => {
+  const grappler = mk({ name: 'G' }), other = mk({ name: 'O' });
+  const atk = mk({ conds: [{ n: 'Grappled', d: null, src: grappler.id }, { n: 'Charmed', d: null, src: other.id }] });
+  assert.deepEqual(R.attackHints(atk, grappler).map(h => h.mode), []);
+  assert.deepEqual(R.attackHints(atk, other).map(h => h.mode), ['dis', null]);
+});
+
 // ---------- turns ----------
 
 test('turns go in initiative order and wrap into the next round', () => {

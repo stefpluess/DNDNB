@@ -82,7 +82,12 @@ Front end, `static/js/` (plain ES modules, no framework):
   Legendary Resistance per day (never resets mid-fight), attack rolls (nat 20 crits, nat 1 misses),
   concentration ends at 0 HP, on a failed Con save or when Incapacitated, and takes its linked
   effects with it; repeated saves are asked at the end (or start) of the bearer's turn,
-  encounter difficulty from the 2024 XP budgets (Low/Moderate/High per character level, no multiplier).
+  encounter difficulty from the 2024 XP budgets (Low/Moderate/High per character level, no multiplier),
+  death (damage at 0 HP >= HP max kills, damage ends Stable, the dead can't be healed),
+  one concentration spell at a time, monster resistances/immunities/condition immunities from the
+  stat block (qualified 2014-style text is left to the DM), Paralyzed/Petrified/Stunned/Unconscious
+  auto-fail Str and Dex saves and Restrained has Disadvantage on Dex saves, a Shield gives AC only
+  with Shield training, Monk Martial Arts, Unarmed Strike for everyone, Weapon Mastery by level.
 
 ## Next steps, in order
 1. Run `python import_srd.py` on the live data and fix whatever the sanity check reports.

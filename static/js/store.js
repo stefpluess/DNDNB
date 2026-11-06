@@ -16,6 +16,7 @@ export const S = {
   editingSlots: new Set(),    // combatant ids with the slot editor open (UI only, never saved)
   targets: new Map(),         // combatant id -> { half, mod }: ticked for area damage (UI only, never saved)
   groupAmt: '',               // what's typed in the area damage box
+  group: { type: '', ab: '', dc: '', onSave: 'half' },   // area damage: damage type and saving throw
   atk: { target: {}, mode: {}, last: null },
   condMoreOpen: false,        // the "concentration and repeated saves" options are open   // attacks: target and roll mode per attacker id, last attack result (UI only)
   // party view

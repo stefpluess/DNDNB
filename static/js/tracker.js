@@ -72,7 +72,7 @@ function renderUndo() {
 /** Damage with a resistance setting: returns the rule messages plus a note when the amount changed. */
 function hurt(c, amount, mod, crit) {
   const n = R.adjustDamage(amount, { mod });
-  const note = mod !== 'normal' ? [`${R.DAMAGE_MODS[mod]}: ${who(c)} takes ${n}.`] : [];
+  const note = mod !== 'normal' ? [`${R.DAMAGE_MODS[mod] || 'Resistant and vulnerable'}: ${who(c)} takes ${n}.`] : [];
   return n > 0 ? [...note, ...R.damage(ctx, c, n, crit)] : note;
 }
 
@@ -118,11 +118,13 @@ function renderPrompts() {
   box.hidden = !list.length;
   for (const { c } of list) if (c.ref && !S.entryCache.has(c.ref)) getEntry(...c.ref.split(':')).then(renderTracker, () => {});
   box.innerHTML = list.map(({ p, c }) => {
-    const b = saveBonus(c, p.ab);
+    const b = saveBonus(c, p.ab), rule = R.saveRule(c, p.ab);
     const what = p.kind === 'conc' ? 'to keep concentration' : `to end ${esc(p.n)}`;
     const [yes, no] = p.kind === 'conc' ? ['Kept', 'Lost'] : ['Succeeded', 'Failed'];
+    const roll = rule.fail ? `<button class="btn sm" data-p="roll" title="${esc(rule.fail)}: fails ${p.ab.toUpperCase()} saves automatically">Fails automatically (${esc(rule.fail)})</button>`
+      : b != null ? `<button class="btn sm" data-p="roll" title="Roll d20 ${signed(b)}${rule.dis ? ' with Disadvantage' : ''} and resolve">Roll ${signed(b)}${rule.dis ? ' with Disadvantage' : ''}</button>` : '';
     return `<div class="prompt" data-pid="${p.id}"><span><b>${esc(who(c))}</b>: ${p.ab.toUpperCase()} save DC ${p.dc} ${what}</span>
-      ${b != null ? `<button class="btn sm" data-p="roll" title="Roll d20 ${signed(b)} and resolve">Roll ${signed(b)}</button>` : ''}
+      ${roll}
       <button class="btn sm ok" data-p="yes">${yes}</button><button class="btn sm bad" data-p="no">${no}</button></div>`;
   }).join('');
 }
@@ -134,9 +136,12 @@ function onPromptClick(e) {
   const c = S.enc.c.find(x => x.id === p.cid);
   let ok = b.dataset.p === 'yes';
   if (b.dataset.p === 'roll') {
-    const bonus = saveBonus(c, p.ab), die = d20(), total = die + bonus;
-    ok = total >= p.dc;
-    pushLog(`${who(c)} ${p.ab.toUpperCase()} save vs DC ${p.dc}: ${ok ? 'success' : 'failure'}`, { total, detail: `[${die}] ${signed(bonus)}` }, die === 20 ? 'crit' : die === 1 ? 'fumble' : '');
+    const rule = R.saveRule(c, p.ab), bonus = saveBonus(c, p.ab) ?? 0, dice = [d20(), d20()];
+    const r = R.rollSave({ dice, bonus, dc: p.dc, rule });
+    ok = r.ok;
+    if (r.auto) toast(`${who(c)} fails automatically (${r.auto}).`);
+    else pushLog(`${who(c)} ${p.ab.toUpperCase()} save vs DC ${p.dc}: ${ok ? 'success' : 'failure'}`,
+      { total: r.total, detail: `[${rule.dis ? dice.join(',') + ' lower' : dice[0]}] ${signed(bonus)}` }, r.die === 20 ? 'crit' : r.die === 1 ? 'fumble' : '');
   }
   remember(`${who(c)}'s ${p.kind === 'conc' ? 'concentration' : p.n} save`);
   changed(c, R.resolvePrompt(ctx, p.id, ok));
@@ -174,9 +179,8 @@ function resourcesHtml(c) {
 
 function rowHtml(c) {
   const v = R.vit(ctx, c), hp = R.hp(ctx, c), max = R.maxHp(ctx, c), temp = R.tempHp(ctx, c);
-  const turn = R.turnState(S.enc, c);
+  const turn = R.turnState(S.enc, c), life = R.lifeState(ctx, c);
   const classes = [`cb k-${c.kind}`, c.id === S.enc.active && 'is-active', turn === 'done' && 'is-done', S.sel?.type === 'c' && S.sel.id === c.id && 'sel', (hp <= 0 || life === 'dead') && 'is-down', life === 'dead' && 'is-dead'].filter(Boolean).join(' ');
-  const life = R.lifeState(ctx, c);
   const tag = life ? { dead: 'Dead', stable: 'Stable', dying: 'Dying', down: 'Down' }[life] : KIND[c.kind];
   const turnTag = turn === 'now' ? '<span class="turn now">Their turn</span>' : turn === 'done' ? '<span class="turn done" title="Already acted this round, or joined after its initiative had passed">✓ Acted</span>' : '';
   const rx = `<button class="rx ${c.rx ? 'used' : ''}" data-a="rx" title="Reaction ${c.rx ? 'used (comes back at the start of its turn)' : 'available'}. Click to toggle." aria-label="Reaction ${c.rx ? 'used' : 'available'}">Reaction</button>`;
@@ -220,14 +224,23 @@ export function renderTracker() {
 // ---------- difficulty and the end-of-combat summary ----------
 
 let fillingXp = false;
+const needsStatBlock = c => c.xp === undefined || c.res === undefined || c.def === undefined;
+/** Fill what a monster combatant takes from its stat block, if missing. Returns true if anything changed. */
+function fillFromStatBlock(c, m) {
+  if (!needsStatBlock(c)) return false;
+  if (c.xp === undefined) c.xp = +m.experience_points || 0;
+  if (c.res === undefined) c.res = R.monsterResources(m);
+  if (c.def === undefined) c.def = R.monsterDefenses(m);
+  return true;
+}
 function renderDifficulty() {
   const line = $('#diffLine');
   const foes = S.enc.c.filter(c => c.kind === 'foe');
-  // monsters added before XP was stored: look it up once
-  const missing = foes.filter(c => c.ref && c.xp === undefined);
+  // monsters added before XP, resources or defenses were stored: look them up once
+  const missing = S.enc.c.filter(c => c.ref && needsStatBlock(c));
   if (missing.length && !fillingXp) {
     fillingXp = true;
-    Promise.all(missing.map(c => getEntry(...c.ref.split(':')).then(m => { c.xp = +m.experience_points || 0; }, () => { c.xp = 0; })))
+    Promise.all(missing.map(c => getEntry(...c.ref.split(':')).then(m => fillFromStatBlock(c, m), () => { c.xp ??= 0; c.res ??= null; c.def ??= null; })))
       .then(() => { fillingXp = false; saveEnc(); renderTracker(); });
   }
   const pcs = S.enc.c.filter(c => c.kind === 'pc');
@@ -265,22 +278,37 @@ function showSummary(s) {
 
 const targetList = () => [...S.targets].map(([id, t]) => ({ c: S.enc.c.find(x => x.id === id), ...t })).filter(t => t.c);
 let groupKey = '';
+/** A new area target: its resistance follows the chosen damage type and its stat block. */
+const newTarget = c => ({ half: false, mod: R.defenseMod(c.def, S.group.type), note: '' });
+const typeOpts = cur => `<option value="">untyped</option>${R.DAMAGE_TYPES.map(t => `<option value="${t}"${t === cur ? ' selected' : ''}>${t}</option>`).join('')}`;
+const modOpts = (cur, auto = false) => (auto ? `<option value="auto"${cur === 'auto' ? ' selected' : ''}>From stat block</option>` : '')
+  + Object.entries(R.DAMAGE_MODS).map(([k, l]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${l}</option>`).join('')
+  + (cur === 'resist+vuln' ? '<option value="resist+vuln" selected>Resistant + Vulnerable</option>' : '');
+
 function renderGroupBar() {
-  const bar = $('#groupBar'), T = targetList();
+  const bar = $('#groupBar'), T = targetList(), G = S.group;
   bar.hidden = !T.length;
-  const key = JSON.stringify(T.map(t => [t.c.id, who(t.c), t.half, t.mod]));
+  const key = JSON.stringify([G, T.map(t => [t.c.id, who(t.c), t.half, t.mod, t.note, t.c.conds.map(x => x.n)])]);
   if (key === groupKey) return updateGroupPreview();
   groupKey = key;
   if (!T.length) { bar.innerHTML = ''; return; }
-  const modOpts = cur => Object.entries(R.DAMAGE_MODS).map(([k, l]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${l}</option>`).join('');
   bar.innerHTML = `<div class="gb-head"><b>${T.length} target${T.length > 1 ? 's' : ''}</b>
       <input class="field" id="gAmt" autocomplete="off" placeholder="Damage: 28 or 8d6" aria-label="Damage for all targets" value="${esc(S.groupAmt)}" title="One roll for everyone. Enter: damage">
+      <select class="field" data-g="type" aria-label="Damage type">${typeOpts(G.type)}</select>
       <button class="btn bad" data-g="dmg">Damage all</button><button class="btn ok" data-g="heal">Heal all</button>
       <span class="spacer"></span><button class="link" data-g="clear">Clear targets</button></div>
-    <div class="gb-list">${T.map(t => `<div class="gb-t" data-id="${t.c.id}"><span class="nm">${esc(who(t.c))}</span>
-      <label class="hint"><input type="checkbox" data-g="half"${t.half ? ' checked' : ''}> Saved: half</label>
+    <div class="gb-head"><label class="hint">Save <select class="field" data-g="ab" aria-label="Saving throw"><option value="">none</option>${S.meta.abilities.map(a => `<option value="${a}"${a === G.ab ? ' selected' : ''}>${a.toUpperCase()}</option>`).join('')}</select></label>
+      <label class="hint">DC <input class="field tiny" type="number" min="1" data-g="dc" value="${esc(G.dc)}" aria-label="Save DC"></label>
+      <label class="hint">on a success <select class="field" data-g="onsave"><option value="half"${G.onSave === 'half' ? ' selected' : ''}>half damage</option><option value="none"${G.onSave === 'none' ? ' selected' : ''}>no damage</option></select></label>
+      <button class="btn sm" data-g="rollsaves"${G.ab && G.dc ? '' : ' disabled'} title="Roll each target's save (Stunned, Paralyzed... fail Str and Dex saves automatically)">Roll saves</button></div>
+    <div class="gb-list">${T.map(t => {
+      const rule = G.ab ? R.saveRule(t.c, G.ab) : {};
+      return `<div class="gb-t" data-id="${t.c.id}"><span class="nm">${esc(who(t.c))}</span>
+      <label class="hint"${rule.fail ? ` title="Fails ${G.ab.toUpperCase()} saves automatically: ${rule.fail}"` : ''}><input type="checkbox" data-g="half"${t.half ? ' checked' : ''}${rule.fail ? ' disabled' : ''}> Saved</label>
+      <span class="hint gb-note">${esc(rule.fail ? `auto-fails (${rule.fail})` : t.note)}${rule.dis && !t.note ? `Disadvantage (${rule.dis})` : ''}</span>
       <select class="field" data-g="mod" aria-label="Resistance of ${esc(who(t.c))}">${modOpts(t.mod)}</select>
-      <span class="gb-n" data-prev></span><button class="link" data-g="drop" title="Remove from targets" aria-label="Remove ${esc(who(t.c))} from targets">×</button></div>`).join('')}</div>`;
+      <span class="gb-n" data-prev></span><button class="link" data-g="drop" title="Remove from targets" aria-label="Remove ${esc(who(t.c))} from targets">×</button></div>`;
+    }).join('')}</div>`;
   updateGroupPreview();
 }
 /** Show what each target takes while the box holds a plain number (dice aren't rolled until you apply). */
@@ -290,9 +318,30 @@ function updateGroupPreview() {
   for (const row of document.querySelectorAll('#groupBar .gb-t')) {
     const t = S.targets.get(row.dataset.id);
     const out = row.querySelector('[data-prev]');
-    if (t && out) out.textContent = n ? `takes ${R.adjustDamage(n, t)}` : '';
+    if (t && out) out.textContent = n ? `takes ${R.adjustDamage(n, { ...t, none: S.group.onSave === 'none' })}` : '';
   }
 }
+
+/** Roll every target's save against the DC; conditions can make it fail automatically or roll with Disadvantage. */
+async function rollGroupSaves() {
+  const G = S.group, dc = parseInt(G.dc, 10), T = targetList();
+  if (!G.ab || !(dc > 0)) return toast('Pick the save and its DC first.');
+  await Promise.all(T.filter(t => t.c.ref).map(t => getEntry(...t.c.ref.split(':')).catch(() => null)));
+  for (const t of T) {
+    const rule = R.saveRule(t.c, G.ab), bonus = saveBonus(t.c, G.ab);
+    const tgt = S.targets.get(t.c.id);
+    if (rule.fail) { tgt.half = false; tgt.note = ''; continue; }
+    if (bonus == null) { tgt.note = 'no save bonus known: tick by hand'; continue; }
+    const dice = [d20(), d20()];
+    const r = R.rollSave({ dice, bonus, dc, rule });
+    tgt.half = r.ok;
+    tgt.note = `${r.total} ${r.ok ? 'saved' : 'failed'}${rule.dis ? ' (Disadvantage)' : ''}`;
+    pushLog(`${who(t.c)} ${G.ab.toUpperCase()} save vs DC ${dc}: ${r.ok ? 'success' : 'failure'}`,
+      { total: r.total, detail: `[${rule.dis ? dice.join(',') + ' lower' : dice[0]}] ${signed(bonus)}` }, r.die === 20 ? 'crit' : r.die === 1 ? 'fumble' : '');
+  }
+  renderGroupBar();
+}
+
 function applyGroup(kind) {
   const T = targetList();
   const what = kind === 'dmg' ? 'Damage' : 'Healing';
@@ -301,8 +350,8 @@ function applyGroup(kind) {
   remember(`${what} ${amount} to ${T.length} creature${T.length > 1 ? 's' : ''}`);
   let msgs;
   if (kind === 'dmg') {
-    const r = R.damageMany(ctx, T, amount);
-    msgs = [r.dealt.map(d => `${d.name} ${d.n}`).join(', ') + '.', ...r.msgs];
+    const r = R.damageMany(ctx, T, amount, false, S.group.onSave === 'none');
+    msgs = [r.dealt.map((d, i) => `${d.name} ${d.n}${T[i].mod !== 'normal' ? ` (${(R.DAMAGE_MODS[T[i].mod] || 'resistant + vulnerable').toLowerCase()})` : ''}`).join(', ') + '.', ...r.msgs];
   } else msgs = [`Healed ${T.map(t => who(t.c)).join(', ')} by ${amount}.`, ...T.flatMap(t => R.heal(ctx, t.c, amount))];
   T.forEach(t => { if (ctx.linked(t.c)) scheduleCharSave(t.c.charId); });
   S.targets.clear(); S.groupAmt = '';
@@ -313,13 +362,24 @@ function onGroupEvent(e) {
   const g = e.target.closest('[data-g]')?.dataset.g;
   const row = e.target.closest('.gb-t');
   const t = row && S.targets.get(row.dataset.id);
+  const G = S.group;
   if (e.type === 'click') {
     if (g === 'dmg' || g === 'heal') applyGroup(g);
+    else if (g === 'rollsaves') rollGroupSaves();
     else if (g === 'clear') { S.targets.clear(); renderTracker(); }
     else if (g === 'drop') { S.targets.delete(row.dataset.id); renderTracker(); }
-  } else if (e.type === 'change' && t) {
-    if (g === 'half') t.half = e.target.checked;
-    if (g === 'mod') t.mod = e.target.value;
+  } else if (e.type === 'change') {
+    if (t && g === 'half') t.half = e.target.checked;
+    if (t && g === 'mod') t.mod = e.target.value;
+    if (g === 'type') {                       // a new damage type: every target's resistance follows its stat block
+      G.type = e.target.value;
+      for (const [id, x] of S.targets) x.mod = R.defenseMod(S.enc.c.find(c => c.id === id)?.def, G.type);
+    }
+    if (g === 'ab' || g === 'dc' || g === 'onsave') {
+      G[g === 'onsave' ? 'onSave' : g] = e.target.value;
+      if (g !== 'onsave') for (const x of S.targets.values()) { x.note = ''; }
+    }
+    if (G.ab) for (const [id, x] of S.targets) { const c = S.enc.c.find(k => k.id === id); if (c && R.saveRule(c, G.ab).fail) x.half = false; }
     renderGroupBar();
   } else if (e.type === 'input' && e.target.id === 'gAmt') {
     S.groupAmt = e.target.value;
@@ -356,8 +416,7 @@ export async function renderInspector() {
       const [kind, idx] = c.ref.split(':');
       try {
         const m = await getEntry(kind, idx);
-        if (kind === 'monster' && c.res === undefined) {          // added before turn resources existed
-          c.res = R.monsterResources(m);
+        if (kind === 'monster' && fillFromStatBlock(c, m)) {     // added before these fields existed
           saveEnc(); renderTracker();
           if (S.sel?.id === c.id) return renderInspector();
         }
@@ -395,6 +454,15 @@ function whenOptions(c) {
   }).join('');
 }
 
+/** "Resistant: cold, fire · Immune: poison · Condition immunities: charmed" from the stat block. */
+function defensesHtml(c) {
+  const d = c.def;
+  if (!d) return '';
+  const parts = [d.resist.length && `Resistant: ${d.resist.join(', ')}`, d.immune.length && `Immune: ${d.immune.join(', ')}`,
+    d.vuln.length && `Vulnerable: ${d.vuln.join(', ')}`, d.condImmune.length && `Condition immunities: ${d.condImmune.join(', ')}`].filter(Boolean);
+  return `<p class="hint defenses">${esc(parts.join(' · '))}${d.notes ? `${parts.length ? ' · ' : ''}<b>Decide by hand:</b> ${esc(d.notes.join('; '))}` : ''}</p>`;
+}
+
 // ---------- attacks against a target ----------
 
 const MODES = { normal: 'Normal', adv: 'Advantage', dis: 'Disadvantage' };
@@ -416,7 +484,8 @@ function attackHtml(c) {
     const exprs = last.parts.map(p => (last.crit ? doubleDice(p.e) : p.e) + (p.t ? ` ${p.t.toLowerCase()}` : '')).join(' + ');
     result = last.hit
       ? `<div class="atkres hit"><p><b>${esc(last.feat)} ${last.crit ? 'crits' : 'hits'} ${esc(who(lt))}</b> (${last.crit ? 'natural 20' : vs}).${last.crit ? ' Damage dice are doubled.' : ''}</p>
-          ${last.parts.length ? `<div class="line"><select class="field" id="atkDmgMod" aria-label="Resistance to this damage">${Object.entries(R.DAMAGE_MODS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
+          ${lt.def && last.parts.some(p => R.defenseMod(lt.def, p.t) !== 'normal') ? `<p class="hint">${esc(who(lt))}: ${esc(last.parts.map(p => `${p.t || 'untyped'} ${(R.DAMAGE_MODS[R.defenseMod(lt.def, p.t)] || 'resistant + vulnerable').toLowerCase()}`).join(', '))}.</p>` : ''}
+          ${last.parts.length ? `<div class="line"><select class="field" id="atkDmgMod" aria-label="Resistance to this damage">${modOpts('auto', true)}</select>
           <button class="btn bad" data-a="atkapply">Roll ${esc(exprs)} and apply</button>` : '<div class="line"><span class="hint">No damage dice on this attack: apply damage by hand.</span>'}
           <button class="link" data-a="atkclear">Dismiss</button></div></div>`
       : `<div class="atkres miss"><p><b>${esc(last.feat)} misses ${esc(who(lt))}</b> (${last.nat === 1 ? 'natural 1' : vs}).</p><button class="link" data-a="atkclear">Dismiss</button></div>`;
@@ -452,13 +521,16 @@ function applyAttack(c) {
   if (!t) { S.atk.last = null; return; }
   const rolls = last.parts.map(p => ({ ...p, r: roll(last.crit ? doubleDice(p.e) : p.e) })).filter(p => p.r);
   const total = rolls.reduce((n, p) => n + p.r.total, 0);
-  const mod = $('#atkDmgMod')?.value || 'normal';
+  const mod = $('#atkDmgMod')?.value || 'auto';
   pushLog(`${who(c)} · ${last.feat} damage to ${who(t)}${last.crit ? ' (crit)' : ''}`,
     { total, detail: rolls.map(p => `${p.r.detail}${p.t ? ' ' + p.t.toLowerCase() : ''}`).join(' + ') });
   remember(`${last.feat}: ${total} damage to ${who(t)}`);
   S.atk.last = null;
-  const n = R.adjustDamage(total, { mod });
-  changed(t, [`${who(t)} takes ${n}${mod !== 'normal' ? ` (${R.DAMAGE_MODS[mod].toLowerCase()})` : ''}.`, ...(n > 0 ? R.damage(ctx, t, n, last.crit) : [])]);
+  // "From stat block": each damage type meets the target's own resistance or immunity
+  const parts = rolls.map(p => ({ t: p.t, m: mod === 'auto' ? R.defenseMod(t.def, p.t) : mod, rolled: p.r.total }));
+  const n = parts.reduce((sum, p) => sum + R.adjustDamage(p.rolled, { mod: p.m }), 0);
+  const notes = parts.filter(p => p.m !== 'normal').map(p => `${p.t ? p.t.toLowerCase() + ' ' : ''}${(R.DAMAGE_MODS[p.m] || 'resistant + vulnerable').toLowerCase()}`);
+  changed(t, [`${who(t)} takes ${n}${notes.length ? ` (${notes.join(', ')})` : ''}.`, ...(n > 0 ? R.damage(ctx, t, n, last.crit) : [])]);
 }
 
 function combatantPanel(c) {
@@ -488,7 +560,9 @@ function combatantPanel(c) {
     <div class="blk"><h4>Hit points</h4>
       <div class="bigstat"><span class="v">${hp}<small>/${R.maxHp(ctx, c)}</small></span>${temp ? `<span class="v tmp">+${temp}<small> temp</small></span>` : ''}<span class="v">${v.ac}<small> AC</small></span></div>
       <div class="line"><input class="field" autocomplete="off" id="insAmt" placeholder="12, 12+7, 2d6+3" aria-label="Amount">
-        <select class="field" id="insMod" aria-label="Resistance to this damage">${Object.entries(R.DAMAGE_MODS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
+        <select class="field" id="insType" aria-label="Damage type">${typeOpts('')}</select>
+        <select class="field" id="insMod" aria-label="Resistance to this damage">${modOpts('normal')}</select></div>
+      ${defensesHtml(c)}
       <div class="line"><button class="btn bad" data-a="dmg" title="Shift-click: damage from a critical hit">Damage</button><button class="btn ok" data-a="heal">Heal</button><button class="btn" data-a="temp">Temp HP</button></div>
       ${ch ? '' : `<div class="line">
         <label class="hint">Max HP <input class="field tiny" type="number" min="1" id="insMax" data-path="max" data-type="num" value="${c.max}"></label>
@@ -559,7 +633,7 @@ function monsterCombatant(m, idx, name, rollHp, i = 0, kind = 'foe') {
   const initBonus = monInit(m);
   return { id: uid(), ref: `monster:${idx}`, name, kind, init: d20() + initBonus, mod: m.modifiers?.dexterity ?? initBonus, ac: monAC(m), hp, max: hp,
     temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100, rx: false,
-    res: R.monsterResources(m), xp: +m.experience_points || 0 };
+    res: R.monsterResources(m), def: R.monsterDefenses(m), xp: +m.experience_points || 0 };
 }
 
 export async function addMonster(idx) {
@@ -867,7 +941,7 @@ export function initCombat() {
     const c = S.enc.c.find(x => x.id === e.target.closest('.cb')?.dataset.id);
     if (!c) return;
     if (e.target.matches('[data-pick]')) {
-      if (e.target.checked) S.targets.set(c.id, { half: false, mod: 'normal' }); else S.targets.delete(c.id);
+      if (e.target.checked) S.targets.set(c.id, newTarget(c)); else S.targets.delete(c.id);
       return renderTracker();
     }
     if (!e.target.matches('[data-f="init"]')) return;
@@ -881,6 +955,7 @@ export function initCombat() {
   $('#inspect').addEventListener('toggle', e => { if (e.target.matches('.condmore')) S.condMoreOpen = e.target.open; }, true);
   $('#inspect').addEventListener('change', e => {
     const c = selected();
+    if (c && e.target.id === 'insType') { $('#insMod').value = R.defenseMod(c.def, e.target.value); return; }
     if (!c || !['atkTarget', 'atkMode'].includes(e.target.id)) return;
     if (e.target.id === 'atkTarget') { S.atk.target[c.id] = e.target.value; if (S.atk.last?.by === c.id) S.atk.last = null; }
     else S.atk.mode[c.id] = e.target.value;
@@ -946,7 +1021,7 @@ export function initCombat() {
   $('#undoBtn').onclick = () => undo(-1);
   $('#redoBtn').onclick = () => undo(1);
   $('#pickFoes').onclick = () => {
-    S.enc.c.filter(c => c.kind === 'foe' && R.hp(ctx, c) > 0 && !S.targets.has(c.id)).forEach(c => S.targets.set(c.id, { half: false, mod: 'normal' }));
+    S.enc.c.filter(c => c.kind === 'foe' && R.hp(ctx, c) > 0 && !S.targets.has(c.id)).forEach(c => S.targets.set(c.id, newTarget(c)));
     renderTracker();
     $('#gAmt')?.focus();
   };

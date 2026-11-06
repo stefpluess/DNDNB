@@ -309,23 +309,92 @@ export const DAMAGE_MODS = { normal: 'Normal', resist: 'Resistant', vuln: 'Vulne
  * Damage a creature actually takes (2024 order of application): halving for a successful save comes
  * first, then resistance halves (rounded down), then vulnerability doubles. Immunity means none.
  */
-export function adjustDamage(amount, { half = false, mod = 'normal' } = {}) {
+export function adjustDamage(amount, { half = false, none = false, mod = 'normal' } = {}) {
   let n = Math.max(0, Math.floor(amount));
+  if (half && none) return 0;                                          // "no damage on a successful save"
   if (half) n = Math.floor(n / 2);
   if (mod === 'immune') return 0;
-  if (mod === 'resist') n = Math.floor(n / 2);
-  if (mod === 'vuln') n *= 2;
+  if (mod === 'resist' || mod === 'resist+vuln') n = Math.floor(n / 2);
+  if (mod === 'vuln' || mod === 'resist+vuln') n *= 2;
   return n;
+}
+
+// ---------- resistances, immunities and vulnerabilities from a stat block ----------
+
+export const DAMAGE_TYPES = ['acid', 'bludgeoning', 'cold', 'fire', 'force', 'lightning', 'necrotic', 'piercing',
+  'poison', 'psychic', 'radiant', 'slashing', 'thunder'];
+const CONDITION_NAMES = ['blinded', 'charmed', 'deafened', 'exhaustion', 'frightened', 'grappled', 'incapacitated',
+  'invisible', 'paralyzed', 'petrified', 'poisoned', 'prone', 'restrained', 'stunned', 'unconscious'];
+// 2014-style qualifiers ("from nonmagical attacks") can't be applied automatically
+const QUALIFIED = /nonmagical|non-magical|except|that (?:is|are|aren't|isn't)|while|unless|in (?:dim light|darkness)/i;
+
+/**
+ * A monster's damage resistances, immunities, vulnerabilities and condition immunities, from the
+ * structured lists when the data has them and from the stat block text otherwise. Lists with a
+ * qualifier are left out and reported in `notes`, so the DM decides those by hand. null if none.
+ */
+export function monsterDefenses(m) {
+  const ri = m?.resistances_and_immunities || {};
+  const notes = [];
+  /** Names from vocab found in a structured list and in a stat block text. */
+  const read = (list, text, vocab) => {
+    const found = new Set((list || []).map(x => String(typeof x === 'string' ? x : x?.name || x?.key || '').toLowerCase()).filter(n => vocab.includes(n)));
+    text = String(text || '');
+    if (QUALIFIED.test(text)) notes.push(text);
+    else for (const v of vocab) if (new RegExp(`\\b${v}\\b`, 'i').test(text)) found.add(v);
+    return [...found];
+  };
+  // some data puts damage and condition immunities in one text ("Poison; Charmed, Poisoned")
+  let [dmgImm, condImm] = [ri.damage_immunities_display, ri.condition_immunities_display];
+  if (!condImm && String(dmgImm || '').includes(';')) [dmgImm, condImm] = String(dmgImm).split(';');
+  const d = {
+    resist: read(ri.damage_resistances, ri.damage_resistances_display, DAMAGE_TYPES),
+    vuln: read(ri.damage_vulnerabilities, ri.damage_vulnerabilities_display, DAMAGE_TYPES),
+    immune: read(ri.damage_immunities, dmgImm, DAMAGE_TYPES),
+    condImmune: read(ri.condition_immunities, condImm, CONDITION_NAMES),
+  };
+  if (notes.length) d.notes = notes;
+  return d.resist.length || d.vuln.length || d.immune.length || d.condImmune.length || notes.length ? d : null;
+}
+
+/** How a creature with defenses `def` takes damage of `type`: 'immune', 'resist', 'vuln', 'resist+vuln' or 'normal'. */
+export function defenseMod(def, type) {
+  const t = String(type || '').toLowerCase();
+  if (!def || !t) return 'normal';
+  if (def.immune.includes(t)) return 'immune';
+  const r = def.resist.includes(t), v = def.vuln.includes(t);
+  return r && v ? 'resist+vuln' : r ? 'resist' : v ? 'vuln' : 'normal';
+}
+
+// ---------- saving throws affected by conditions ----------
+
+const AUTO_FAIL_STR_DEX = ['Paralyzed', 'Petrified', 'Stunned', 'Unconscious'];
+/** 2024 conditions on a save: { fail: 'Stunned' } (fails automatically), { dis: 'Restrained' } or {}. */
+export function saveRule(c, ab) {
+  if (ab === 'str' || ab === 'dex') {
+    const x = c.conds.find(k => AUTO_FAIL_STR_DEX.includes(k.n));
+    if (x) return { fail: x.n };
+  }
+  if (ab === 'dex' && hasCond(c, 'Restrained')) return { dis: 'Restrained' };
+  return {};
+}
+
+/** Resolve a save: `dice` are d20 rolls (two for Disadvantage, the lower counts). Returns { die, total, ok, auto }. */
+export function rollSave({ dice, bonus, dc, rule = {} }) {
+  if (rule.fail) return { die: null, total: null, ok: false, auto: rule.fail };
+  const die = rule.dis ? Math.min(...dice) : dice[0];
+  const total = die + bonus;
+  return { die, total, ok: total >= dc, auto: null };
 }
 
 /**
  * One damage roll against several creatures (Fireball, a breath weapon). Each target is { c, half, mod }.
  * Returns { msgs, dealt: [{ name, n }] }.
  */
-export function damageMany(ctx, targets, amount, crit = false) {
+export function damageMany(ctx, targets, amount, crit = false, none = false) {
   const msgs = [], dealt = [];
   for (const t of targets) {
-    const n = adjustDamage(amount, t);
+    const n = adjustDamage(amount, { ...t, none });
     dealt.push({ name: nameOf(ctx, t.c), n });
     if (n > 0) msgs.push(...damage(ctx, t.c, n, crit));
   }
@@ -404,6 +473,8 @@ export function attackHints(atk, tgt) {
     if (x.n === 'Invisible') out.push({ text: 'Invisible target: attacks have Disadvantage', mode: 'dis' });
   }
   for (const x of atk.conds) {
+    if (x.n === 'Grappled' && x.src !== tgt.id) out.push({ text: `Grappled attacker: Disadvantage against anyone but the grappler`, mode: 'dis' });
+    if (x.n === 'Charmed' && x.src === tgt.id) out.push({ text: 'Charmed attacker: it can\'t attack the creature that charmed it', mode: null });
     if (['Blinded', 'Poisoned', 'Restrained', 'Prone'].includes(x.n)) out.push({ text: `${x.n} attacker: Disadvantage`, mode: 'dis' });
     if (x.n === 'Frightened') out.push({ text: 'Frightened attacker: Disadvantage while the source is in sight', mode: 'dis' });
     if (x.n === 'Invisible') out.push({ text: 'Invisible attacker: Advantage', mode: 'adv' });
@@ -488,6 +559,7 @@ export const INCAPACITATING = ['Incapacitated', 'Paralyzed', 'Petrified', 'Stunn
  *   save      { ab, dc, when }: the bearer repeats a save at the 'end' (or 'start') of each of its turns.
  */
 export function addCondition(ctx, c, name, rounds, opts = {}) {
+  if (c.def?.condImmune?.includes(String(name).toLowerCase())) return [`${nameOf(ctx, c)} is immune to ${name}.`];
   if (name === 'Exhaustion') return setExhaustion(ctx, c, exhaustion(ctx, c) + 1);
   const msgs = [];
   const d = rounds > 0 ? rounds : null;
