@@ -302,7 +302,7 @@ add("ancients-2024", S("paladin", "Oath of the Ancients", P24, [
     F(3, "Nature's Wrath", "Channel Divinity: creatures of your choice in a 15-ft emanation make a Str save or are Restrained for 1 minute (repeat the save each turn)."),
     F(7, "Aura of Warding", "You and allies in your aura have resistance to necrotic, psychic and radiant damage.", resist=["necrotic", "psychic", "radiant"], aura=dict(name="Aura of Warding")),
     F(15, "Undying Sentinel", "When you would drop to 0 HP and not die, drop to 1 HP and regain three times your Paladin level instead. Once per Long Rest. You don't age.",
-      resource=("undying_sentinel", "Undying Sentinel", 1, LR)),
+      resource=("undying_sentinel", "Undying Sentinel", 1, LR), cheat_death=dict(key="undying_sentinel", hp="1 + 3*level")),
     F(20, "Elder Champion", "Bonus Action, 1 minute: regain 10 HP at the start of each turn, cast 1-action Paladin spells as a Bonus Action, and enemies in your aura have Disadvantage on saves against your spells and Channel Divinity. Once per Long Rest, or a 5th-level slot.",
       resource=("elder_champion", "Elder Champion", 1, LR)),
 ]))

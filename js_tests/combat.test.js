@@ -660,6 +660,18 @@ test('Weapon Mastery effects', () => {
   assert.ok(!R.hasCond(o, 'Sapped'));
 });
 
+test('Relentless Endurance, damage reduction and feature save Advantage', () => {
+  const orc = mk({ name: 'Orc', kind: 'pc', hp: 10, max: 30, cheatDeath: [{ key: 'relentless_endurance', hp: 1, from: 'Relentless Endurance' }] });
+  const ctx = fight([orc]);
+  assert.match(R.damage(ctx, orc, 15).join(' '), /Relentless Endurance: Orc drops to 1 HP/);
+  assert.deepEqual([orc.hp, orc.spent], [1, ['relentless_endurance']]);
+  R.damage(ctx, orc, 5);                                           // no use left: drops to 0
+  assert.equal(R.lifeState(ctx, orc), 'dying');
+  const knight = mk({ dr: [{ types: ['slashing', 'piercing', 'bludgeoning'], amount: 3 }], saveAdv: ['wis'] });
+  assert.deepEqual([R.reduceDamage(knight, 'Slashing', 10), R.reduceDamage(knight, 'fire', 10), R.reduceDamage(knight, 'piercing', 2)], [7, 10, 0]);
+  assert.deepEqual(R.saveRule(knight, 'wis'), { adv: 'feature' });
+});
+
 // ---------- names ----------
 
 test('group names number creatures and never repeat a number', () => {

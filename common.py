@@ -87,4 +87,5 @@ def meta():
         "damage_types": DAMAGE_TYPES, "action_types": ACTION_TYPES, "conditions": CONDITIONS,
         "cr_values": CR_VALUES, "fighting_styles": FIGHTING_STYLES,
         "subclasses": subclasses.catalog(), "class_choices": subclasses.class_catalog(),
+        "origins": subclasses.origin_catalog(),
     }

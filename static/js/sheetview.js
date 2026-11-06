@@ -44,7 +44,6 @@ function subclassHtml(d, compact) {
   const spells = Object.entries(sc.spells || {}).map(([lv, names]) => `${lv}: ${names.map(esc).join(', ')}`).join(' · ');
   const body = `<ul class="features">${feats}</ul>
     ${spells ? `<p class="hint"><b>Always prepared</b> (by class level) ${spells}</p>` : ''}
-    ${sc.hp_per_level ? `<p class="hint">Remember: +${sc.hp_per_level} HP per class level in the Max HP field.</p>` : ''}
     <p class="hint">Summaries in our own words: check the ${esc(sc.source)} for the exact rules.</p>`;
   return `<div class="blk"><h4>${esc(sc.name)} <span class="hint">${esc(sc.source)}</span></h4>${compact ? `<details><summary class="hint">Features</summary>${body}</details>` : body}</div>`;
 }
@@ -93,6 +92,9 @@ export function derivedHtml(ch, { compact = false } = {}) {
       ? `<div class="tile">${roll(d.sneak_attack, 'dmg', `${name} · Sneak Attack`, `<b>${d.sneak_attack}</b>`, 'link', 'Once per turn: Finesse or Ranged weapon with Advantage, or an ally next to the target. Shift-click for a crit')}<small>SNEAK ATTACK</small></div>` : ''}</div>` : ''}
     ${resourcesHtml(d)}
     ${classFeaturesHtml(d, compact)}
+    ${d.origin_features?.length ? `<div class="blk"><h4>Species and feats</h4><details${compact ? '' : ' open'}><summary class="hint">Traits</summary>
+      <ul class="features">${featureItems(d.origin_features)}</ul></details></div>` : ''}
+    ${d.hp_per_level_bonus ? `<p class="hint">Remember: +${d.hp_per_level_bonus} HP per level (species, feats, subclass) belongs in the Max HP field.</p>` : ''}
     ${subclassHtml(d, compact)}
     <div class="blk"><h4>Attacks <span class="hint">shift-click damage for a crit</span></h4>${attacks}
       ${d.mastery_slots ? `<p class="hint">Weapon Mastery: ${(s.prof.mastery || []).length} of ${d.mastery_slots} known at level ${d.level} (tick them in the inventory).</p>` : ''}</div>

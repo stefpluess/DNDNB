@@ -31,6 +31,15 @@ The catalog lives in subclass_data.py. A feature is F(level, name, summary, **ef
   ac_bonus=dict(add="int", min=1, needs="Bladesong")  AC bonus while a condition is set
   dex_save_adv=True                 Advantage on Dex saves unless Incapacitated (Danger Sense)
   aura=dict(name="Aura of Protection", value="cha")   an aura the character can extend to allies in combat
+  save_adv=["int", "wis", "cha"]    Advantage on those saving throws (Gnomish Cunning)
+  unarmed_die="1d4"                 Unarmed Strike damage die (Tavern Brawler)
+  dr=dict(types=[...], amount="pb", heavy=True)   damage reduction (Heavy Armor Master: only in heavy armor)
+  medium_dex_cap=3                  medium armor allows this much Dex (Medium Armor Master)
+  ignore_cover=True                 attacks ignore half and three-quarters cover (Sharpshooter)
+  cheat_death=dict(key, hp)         drop to `hp` instead of 0 while the resource `key` has a use (Relentless Endurance)
+  long_rest_inspiration=True        Heroic Inspiration after every Long Rest (Human Resourceful)
+  rider when="heavy"                only on weapons with the Heavy property (Great Weapon Master)
+Species, backgrounds and feats (subclass_data/origins.py) run through the same engine.
 Class features use the same keys; they live in subclass_data/classes.py.
   options=[(key, name, summary, {effects}), ...]  a choice the player makes; the chosen option's effects apply
 Formulas use: level, pb, half (level // 2), str, dex, con, int, wis, cha (modifiers), and max(...).
@@ -42,6 +51,7 @@ import re
 from subclass_data import CATALOG as SUBCLASSES  # the data, written with F() and S() from that module
 from subclass_data import SUPERSEDED
 from subclass_data.classes import CLASS_FEATURES
+from subclass_data.origins import BACKGROUNDS, FEATS, SPECIES
 
 
 # ---------- evaluating formulas ----------
@@ -122,9 +132,18 @@ def effects(sheet, cls, level, pb, mods):
            "init": 0, "attacks": [], "magic_weapon_ability": None, "melee_ability": None, "hp_per_level": 0,
            "spells": {}, "summons": [], "third_caster": None, "saves": [], "save_bonus": [], "scores": {}, "mark_die": None,
            "defenses": {"resist": [], "immune": [], "vuln": [], "condImmune": []}, "cdef": [], "ac_cond": [],
-           "dex_save_adv": None, "auras": [], "heroic_warrior": False}
+           "dex_save_adv": None, "auras": [], "heroic_warrior": False, "origin_features": [],
+           "save_adv": [], "unarmed_die": None, "dr": [], "medium_dex_cap": None, "ignore_cover": False, "cheat_death": [],
+           "long_rest_inspiration": False}
     _features(CLASS_FEATURES.get(cls, []), level, choices, out["class_features"], out, v)
     out["class_spells"], out["spells"] = out["spells"], {}          # the class's always-prepared spells, shown apart
+    # species, then the background's Origin feat and the chosen feats (character level gates species traits)
+    sp = SPECIES.get(sheet.get("species") or "")
+    if sp:
+        _features(sp[1], level, choices, out["origin_features"], out, v)
+    for key in feat_keys(sheet):
+        _features(FEATS[key][2], level, choices, out["origin_features"], out, v)
+    out["origin_spells"], out["spells"] = out["spells"], {}
     sc = SUBCLASSES.get(sheet.get("subclass") or "")
     if not sc:
         return out
@@ -140,6 +159,24 @@ def effects(sheet, cls, level, pb, mods):
         out["warnings"].append(f"{sc['name']} starts at {sc['class'].title()} level {sc['level']}.")
     _features(sc["features"], level, choices, out["features"], out, v)
     return out
+
+
+def feat_keys(sheet):
+    """The character's feats: the background's Origin feat first, then the ones picked (no duplicates)."""
+    bg = BACKGROUNDS.get(sheet.get("background") or "")
+    keys = ([bg[1]] if bg else []) + [k for k in (sheet.get("feats") or []) if k in FEATS]
+    return list(dict.fromkeys(keys))
+
+
+def origin_catalog():
+    """Species, backgrounds and feats for the sheet editor, with the choices each asks for."""
+    ch = lambda fs: [{"feature": f["name"], "level": f["level"], "options": [{"key": k, "name": n} for k, n, *_ in f["options"]]}
+                     for f in fs if f.get("options")]
+    return {
+        "species": [{"key": k, "name": n, "choices": ch(fs)} for k, (n, fs) in SPECIES.items()],
+        "backgrounds": [{"key": k, "name": n, "feat": f, "grants": g} for k, (n, f, g) in BACKGROUNDS.items()],
+        "feats": [{"key": k, "name": n, "category": c, "choices": ch(fs)} for k, (n, c, fs) in FEATS.items()],
+    }
 
 
 def score_boosts(cls, level):
@@ -170,6 +207,19 @@ def _collect(out, e, v, feature):
     if "ac_bonus" in e:
         b = e["ac_bonus"]
         out["ac_cond"].append({"needs": b["needs"], "ac": max(b.get("min", -99), v[b["add"]]) if b.get("add") else b["ac"], "from": feature})
+    out["save_adv"] += e.get("save_adv", [])
+    if "unarmed_die" in e:
+        out["unarmed_die"] = e["unarmed_die"]
+    if "dr" in e:
+        out["dr"].append({**e["dr"], "amount": value(e["dr"]["amount"], v), "from": feature})
+    if "medium_dex_cap" in e:
+        out["medium_dex_cap"] = e["medium_dex_cap"]
+    if e.get("ignore_cover"):
+        out["ignore_cover"] = True
+    if "cheat_death" in e:
+        out["cheat_death"].append({"key": e["cheat_death"]["key"], "hp": value(e["cheat_death"]["hp"], v), "from": feature})
+    if e.get("long_rest_inspiration"):
+        out["long_rest_inspiration"] = True
     if e.get("heroic_warrior"):
         out["heroic_warrior"] = True
     if e.get("dex_save_adv"):

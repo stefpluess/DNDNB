@@ -164,6 +164,7 @@ def blank_sheet(name="New character"):
         "styles": [], "spell_ability": None, "ac_misc": 0, "init_misc": 0,
         "slots": [{"max": 0, "used": 0} for _ in range(9)],
         "hit_dice_used": 0, "resources_used": {}, "subclass": "", "choices": {}, "inspiration": False,
+        "species": "", "background": "", "feats": [],
         "inventory": [], "notes": "",
     }
 
@@ -251,6 +252,8 @@ def long_rest(sheet):
     sheet = normalize(sheet)
     sheet.update(hp=sheet["max_hp"], temp_hp=0, exhaustion=max(0, int(sheet.get("exhaustion") or 0) - 1),
                  hit_dice_used=0, resources_used={})
+    if derive(sheet)["long_rest_inspiration"]:          # Human Resourceful
+        sheet["inspiration"] = True
     for slot in sheet["slots"]:
         slot["used"] = 0
     return {"rest": "long"}
@@ -454,8 +457,11 @@ def derive(sheet):
         a = armor.get("armor") or {}
         ac_parts.append((armor["name"], int(a.get("base", 10))))
         if a.get("dex_bonus"):
-            dex = m["dex"] if a.get("max_bonus") is None else min(m["dex"], int(a["max_bonus"]))
-            ac_parts.append(("Dexterity" + (f" (max {a['max_bonus']})" if a.get("max_bonus") is not None else ""), dex))
+            cap = a.get("max_bonus")
+            if cap is not None and (a.get("category") or "").lower() == "medium" and sub["medium_dex_cap"]:
+                cap = max(int(cap), sub["medium_dex_cap"])           # Medium Armor Master
+            dex = m["dex"] if cap is None else min(m["dex"], int(cap))
+            ac_parts.append(("Dexterity" + (f" (max {cap})" if cap is not None else ""), dex))
         if armor.get("bonus"):
             ac_parts.append((f"Magic armor +{armor['bonus']}", int(armor["bonus"])))
         cat = (a.get("category") or "").lower()
@@ -603,6 +609,7 @@ def derive(sheet):
             "mastery": w.get("mastery"),
             "mastery_known": (w.get("index") or "").lower() in {x.lower() for x in prof.get("mastery", [])},
             "ability_mod": m[ab], "mastery_dc": 8 + m[ab] + pb,     # Graze damage and Topple's save DC
+            "props": sorted(props),
         }
         if w.get("range_normal") and (ranged or "thrown" in props):
             entry["range"] = f"{w['range_normal']}/{w['range_long']} ft" if w.get("range_long") else f"{w['range_normal']} ft"
@@ -642,6 +649,8 @@ def derive(sheet):
         uf_die = "1d8" if empty else "1d6"
         if _avg(uf_die) > _avg(ma_die):
             ma_die = uf_die
+    if sub["unarmed_die"] and _avg(sub["unarmed_die"]) > _avg(ma_die):  # Tavern Brawler
+        ma_die = sub["unarmed_die"]
     ua_hit = [(ABILITY_NAMES[ua], m[ua]), ("Proficiency", pb)] + ([("Exhaustion", -pen)] if pen else [])
     attacks.append({
         "uid": "unarmed", "name": "Unarmed Strike", "equipped": True, "ability": ua, "proficient": True, "ranged": False,
@@ -679,6 +688,7 @@ def derive(sheet):
         riders = list(e.pop("own_riders", []))
         for r in (sub or {}).get("riders", []):
             if r["when"] == "any" or (r["when"] == "unarmed" and e.get("unarmed")) or (
+                    r["when"] == "heavy" and "heavy" in e.get("props", [])) or (
                     r["when"] in ("weapon", "melee") and (not e.get("unarmed") or r.get("unarmed"))
                     and not (r["when"] == "melee" and e["ranged"])):
                 riders.append(r)
@@ -692,6 +702,8 @@ def derive(sheet):
         spell = {"ability": sa,
                  "dc": 8 + pb + m[sa] + _mod_total(active, "spell_dc"),
                  "attack": pb + m[sa] + _mod_total(active, "spell_attack") - pen}
+
+    resources = class_resources(cls, level, m, sheet.get("resources_used"), sub["resources"])
 
     # initiative: a Dexterity check, so Dex-check bonuses from the subclass count
     init = m["dex"] + int(sheet.get("init_misc") or 0) - pen + (sub or {}).get("init", 0)
@@ -716,7 +728,9 @@ def derive(sheet):
         "suggested_slots": default_slots(sheet.get("class_name") or "", level, bool((sub or {}).get("third_caster"))),
         "hit_dice": {"die": (CLASS_DEFAULTS.get(cls) or (None,) * 5)[4], "total": level,
                      "left": max(0, level - int(sheet.get("hit_dice_used") or 0))},
-        "resources": class_resources(cls, level, m, sheet.get("resources_used"), (sub or {}).get("resources", [])),
+        "resources": resources,
+        # drop to N HP instead of 0, while the feature has a use left (Relentless Endurance, Undying Sentinel)
+        "cheat_death": [c for c in sub["cheat_death"] if any(r["key"] == c["key"] and r["used"] < r["max"] for r in resources)],
         "attune_limit": attune_limit, "speed_notes": speed_notes,
         "crit_range": crit,
         "subclass": {**{k: sub[k] for k in ("key", "name", "source", "features", "spells", "summons", "hp_per_level")},
@@ -724,7 +738,10 @@ def derive(sheet):
         if sub["key"] else None,
         "class_source": "Tasha's" if cls == "artificer" else "PHB 2024",
         "defenses": sub["defenses"], "cdef": sub["cdef"], "ac_cond": sub["ac_cond"],
-        "dex_save_adv": sub["dex_save_adv"], "auras": sub["auras"],
+        "dex_save_adv": sub["dex_save_adv"], "auras": sub["auras"], "save_adv": sorted(set(sub["save_adv"])),
+        "dr": [d for d in sub["dr"] if not d.get("heavy") or heavy],
+        "ignore_cover": sub["ignore_cover"], "origin_features": sub["origin_features"], "origin_spells": sub["origin_spells"],
+        "hp_per_level_bonus": sub["hp_per_level"], "long_rest_inspiration": sub["long_rest_inspiration"],
         "class_features": sub["class_features"], "heroic_warrior": sub["heroic_warrior"],
         # save DCs of on-hit features: Stunning Strike (Monk 5+), Cunning Strike (Rogue 5+)
         "stunning_dc": 8 + m["wis"] + pb if cls == "monk" and level >= 5 else None,

@@ -238,6 +238,51 @@ class OnTheSheet(unittest.TestCase):
         bs = rules.derive(char("wizard", 2, "bladesinging-tce", int=18))
         self.assertEqual(bs["ac_cond"][0]["ac"], 4)
 
+    def test_species_background_and_feats(self):
+        s = char("fighter", 5, dex=14, str=16)
+        s.update(species="dwarf", background="criminal", feats=["great-weapon-master", "heavy-armor-master", "resilient"])
+        s["choices"] = {"Resilient": "wis"}
+        s["inventory"] = [{"uid": "p", "name": "Plate", "type": "armor", "equipped": True, "armor": {"category": "Heavy", "base": 18, "str_min": 0}},
+                          {"uid": "g", "name": "Greatsword", "type": "weapon", "equipped": True,
+                           "weapon": {"index": "greatsword", "category": "Martial", "range": "Melee", "dice": "2d6", "dtype": "slashing", "properties": ["heavy", "two-handed"]}},
+                          {"uid": "d", "name": "Dagger", "type": "weapon", "equipped": True,
+                           "weapon": {"index": "dagger", "category": "Simple", "range": "Melee", "dice": "1d4", "dtype": "piercing", "properties": ["finesse", "light"]}}]
+        d = rules.derive(s)
+        self.assertEqual(d["initiative"], 2 + 3)                                     # Alert from the Criminal background
+        self.assertEqual(d["defenses"]["resist"], ["poison"])                        # Dwarven Resilience
+        self.assertEqual(d["hp_per_level_bonus"], 1)                                 # Dwarven Toughness
+        self.assertTrue(d["saves"]["wis"]["proficient"])                             # Resilient (Wis)
+        atk = {a["name"]: a for a in d["attacks"]}
+        self.assertEqual(atk["Greatsword"]["riders"][0]["dice"], "3")               # GWM: + PB on Heavy weapons
+        self.assertNotIn("riders", atk["Dagger"])
+        self.assertEqual(d["dr"][0]["amount"], 3)                                    # Heavy Armor Master in heavy armor
+        s["inventory"] = s["inventory"][1:]
+        self.assertEqual(rules.derive(s)["dr"], [])
+
+    def test_relentless_endurance_resourceful_and_tavern_brawler(self):
+        s = char("barbarian", 1, str=16)
+        s.update(species="orc", background="sailor")
+        d = rules.derive(s)
+        self.assertEqual(d["cheat_death"], [{"key": "relentless_endurance", "hp": 1, "from": "Relentless Endurance"}])
+        self.assertEqual(next(a for a in d["attacks"] if a["name"] == "Unarmed Strike")["damage"], "1d4+3 bludgeoning")
+        s["resources_used"] = {"relentless_endurance": 1}
+        self.assertEqual(rules.derive(s)["cheat_death"], [])
+        h = char("wizard", 1)
+        h["species"] = "human"
+        rules.long_rest(h)
+        self.assertTrue(h["inspiration"])
+
+    def test_gnome_cunning_and_medium_armor_master(self):
+        g = char("fighter", 4, dex=18)
+        g.update(species="gnome", feats=["medium-armor-master"])
+        g["inventory"] = [{"uid": "h", "name": "Half Plate", "type": "armor", "equipped": True,
+                           "armor": {"category": "Medium", "base": 15, "dex_bonus": True, "max_bonus": 2, "str_min": 0}}]
+        d = rules.derive(g)
+        self.assertEqual((d["save_adv"], d["ac"]), (["cha", "int", "wis"], 15 + 3))
+        cat = subclasses.origin_catalog()
+        self.assertEqual(len(cat["species"]), 10)
+        self.assertEqual(len(cat["backgrounds"]), 16)
+
     def test_wrong_class_or_level_warns(self):
         self.assertTrue([w for w in rules.derive(char("wizard", 5, "champion-2024"))["warnings"] if "Fighter subclass" in w])
         self.assertTrue([w for w in rules.derive(char("fighter", 2, "champion-2024"))["warnings"] if "starts at" in w])

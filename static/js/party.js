@@ -57,6 +57,35 @@ function inventoryRows(s) {
   }).join('');
 }
 
+/** The background's Origin feat plus the chosen feats. */
+function featKeys(s) {
+  const bg = S.meta.origins.backgrounds.find(b => b.key === s.background);
+  return [...new Set([...(bg ? [bg.feat] : []), ...(s.feats || [])])];
+}
+
+/** Species and background pickers (2024 Player's Handbook). */
+function originFields(s) {
+  const O = S.meta.origins;
+  const bg = O.backgrounds.find(b => b.key === s.background);
+  return `<label class="lbl-f">Species <select class="field" data-path="species" data-type="opt" id="f-species"><option value="">—</option>${O.species.map(x =>
+      `<option value="${x.key}"${x.key === s.species ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+    <label class="lbl-f">Background <select class="field" data-path="background" data-type="opt" id="f-background" title="${esc(bg ? `${bg.grants}; Origin feat: ${O.feats.find(f => f.key === bg.feat)?.name}` : '')}"><option value="">—</option>${O.backgrounds.map(x =>
+      `<option value="${x.key}"${x.key === s.background ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>`;
+}
+
+/** The feats list: the background's feat (fixed) and picked feats with a remove button; add from a list. */
+function featsHtml(s) {
+  const O = S.meta.origins, bg = O.backgrounds.find(b => b.key === s.background);
+  const name = k => O.feats.find(f => f.key === k)?.name || k;
+  const groups = { origin: 'Origin feats', general: 'General feats (level 4+)', epic: 'Epic Boons (level 19+)' };
+  return `<div class="blk"><h4>Feats <span class="hint">ability score increases from feats and backgrounds: type them into the scores</span></h4>
+    <div class="chips">${bg ? `<span class="chip" title="From the ${esc(bg.name)} background">${esc(name(bg.feat))} <small class="src">${esc(bg.name)}</small></span>` : ''}
+      ${(s.feats || []).map(k => `<button class="chip" data-rmfeat="${esc(k)}" title="Remove">${esc(name(k))}<span aria-hidden="true">×</span></button>`).join('')}</div>
+    <div class="line"><select class="field" id="addFeat" aria-label="Add a feat"><option value="">Add a feat…</option>${Object.entries(groups).map(([g, label]) =>
+      `<optgroup label="${label}">${O.feats.filter(f => f.category === g).map(f => `<option value="${f.key}">${esc(f.name)}</option>`).join('')}</optgroup>`).join('')}</select></div>
+    ${bg ? `<p class="hint">${esc(bg.name)}: ${esc(bg.grants)} (tick them above).</p>` : ''}</div>`;
+}
+
 /** The subclass picker (subclasses of the sheet's class, every edition) and the choices it asks for. */
 function subclassFields(s) {
   const cls = (s.class_name || '').trim().toLowerCase();
@@ -68,10 +97,13 @@ function subclassFields(s) {
   const opts = `<optgroup label="Current">${current.map(opt).join('')}</optgroup>`
     + (older.length ? `<optgroup label="Older versions (replaced in 2024)">${older.map(opt).join('')}</optgroup>` : '');
   const stale = cur && cur.class !== cls ? `<option value="${cur.key}" selected>${esc(cur.name)} (${esc(cur.source)}, not ${esc(s.class_name || 'this class')})</option>` : '';
-  const choices = [...(S.meta.class_choices[cls] || []), ...(cur?.choices || [])].map(c => `<label class="lbl-f">${esc(c.feature)} <small class="hint">level ${c.level}</small>
+  const O = S.meta.origins;
+  const originChoices = [...(O.species.find(x => x.key === s.species)?.choices || []),
+    ...O.feats.filter(f => featKeys(s).includes(f.key)).flatMap(f => f.choices)];
+  const choices = [...(S.meta.class_choices[cls] || []), ...(cur?.choices || []), ...originChoices].map(c => `<label class="lbl-f">${esc(c.feature)} <small class="hint">level ${c.level}</small>
       <select class="field" data-path="choices.${esc(c.feature)}" data-type="opt"><option value="">Choose…</option>${c.options.map(o =>
         `<option value="${o.key}"${(s.choices || {})[c.feature] === o.key ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></label>`).join('');
-  return `<label class="lbl-f">Subclass <select class="field" data-path="subclass" data-type="opt" id="f-subclass">
+  return `${originFields(s)}<label class="lbl-f">Subclass <select class="field" data-path="subclass" data-type="opt" id="f-subclass">
       <option value="">${list.length ? 'None yet' : cls ? 'No subclasses for this class' : 'Set a class first'}</option>${stale}${opts}</select></label>${choices}`;
 }
 
@@ -115,6 +147,7 @@ function renderSheet() {
       <label class="grow">Others <input class="field" id="f-otherweapons" data-special="otherweapons" value="${esc(p.weapons.filter(w => !BASE_WEAPONS.includes(w)).join(', '))}" placeholder="rapier, hand-crossbow"></label></div></div>
     <div class="blk"><h4>Skills <span class="hint">second box is expertise</span></h4><div class="skillgrid">${Object.entries(S.meta.skills).map(([k, a]) =>
       `<label><input type="checkbox" data-list="prof.skills" value="${k}" ${p.skills.includes(k) ? 'checked' : ''} aria-label="${label(k)} proficiency"><input type="checkbox" data-list="prof.expertise" value="${k}" ${p.expertise.includes(k) ? 'checked' : ''} aria-label="${label(k)} expertise"> ${label(k)}<span class="ab">${UP(a)}</span></label>`).join('')}</div></div>
+    ${featsHtml(s)}
     <div class="blk"><h4>Fighting style</h4><div class="checks">${S.meta.fighting_styles.map(f => chk('styles', f, label(f) + (['great_weapon', 'thrown_weapon', 'two_weapon', 'unarmed'].includes(f) ? ' Fighting' : ''))).join('')}</div></div>
   </div>
   <div class="sec"><h3>Inventory <span class="line"><button class="link" data-sa="customitem">Add custom item</button></span></h3>
@@ -196,12 +229,17 @@ export function initParty() {
       scheduleCharSave(ch.id);
       if (['name', 'class_name', 'level', 'race'].includes(path)) renderCharList();
       // the subclass list follows the class, and a subclass brings its own choices
-      if (phase === 'change' && (path === 'class_name' || path === 'subclass')) renderSheet();
+      if (phase === 'change' && ['class_name', 'subclass', 'species', 'background'].includes(path)) renderSheet();
       if (/\.attune$/.test(path)) renderSheet();
     },
   });
   $('#sheet').addEventListener('change', e => {
     const ch = current();
+    if (ch && e.target.id === 'addFeat' && e.target.value) {
+      ch.sheet.feats = [...new Set([...(ch.sheet.feats || []), e.target.value])];
+      renderSheet();
+      return charOp(ch.id);
+    }
     if (!ch || e.target.dataset.special !== 'otherweapons') return;
     const base = ch.sheet.prof.weapons.filter(w => BASE_WEAPONS.includes(w));
     const others = e.target.value.split(',').map(x => x.trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean);
@@ -211,6 +249,8 @@ export function initParty() {
   $('#sheet').addEventListener('click', async e => {
     const ch = current();
     if (!ch) return;
+    const rf = e.target.closest('[data-rmfeat]');
+    if (rf) { ch.sheet.feats = (ch.sheet.feats || []).filter(k => k !== rf.dataset.rmfeat); renderSheet(); return charOp(ch.id); }
     const rm = e.target.closest('[data-rmitem]');
     if (rm) { ch.sheet.inventory.splice(+rm.dataset.rmitem, 1); return charOp(ch.id); }
     const add = e.target.closest('[data-additem]');

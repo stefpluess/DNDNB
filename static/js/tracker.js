@@ -17,6 +17,12 @@ const blankSlots = () => Array.from({ length: 9 }, () => ({ max: 0, used: 0 }));
 /** After a rule changed a combatant: show its messages and save what changed. */
 function changed(c, msgs = []) {
   if (msgs.length) toast(msgs.join(' '));
+  // a rule used up a once-per-rest feature (Relentless Endurance...): spend it on the sheet
+  for (const x of S.enc.c) {
+    const ch = x.spent?.length && ctx.linked(x);
+    if (ch) { for (const k of x.spent) ch.sheet.resources_used[k] = (ch.sheet.resources_used[k] || 0) + 1; scheduleCharSave(x.charId); }
+    delete x.spent;
+  }
   if (c && ctx.linked(c)) scheduleCharSave(c.charId);
   saveEnc();
 }
@@ -70,8 +76,8 @@ function renderUndo() {
 }
 
 /** Damage with a resistance setting: returns the rule messages plus a note when the amount changed. */
-function hurt(c, amount, mod, crit) {
-  const n = R.adjustDamage(amount, { mod });
+function hurt(c, amount, mod, crit, type = '') {
+  const n = R.adjustDamage(R.reduceDamage(c, type, amount), { mod });
   const note = mod !== 'normal' ? [`${R.DAMAGE_MODS[mod] || 'Resistant and vulnerable'}: ${who(c)} takes ${n}.`] : [];
   return n > 0 ? [...note, ...R.damage(ctx, c, n, crit)] : note;
 }
@@ -228,6 +234,11 @@ function syncFromSheets() {
     c.acCond = d.ac_cond || [];
     c.dexSaveAdv = d.dex_save_adv || null;
     c.heroicWarrior = !!d.heroic_warrior;
+    c.dr = d.dr || [];
+    c.saveAdv = d.save_adv || [];
+    // drop-to-1 features with a use left on the sheet right now (it may be ahead of the last save)
+    const left = k => { const r = d.resources.find(x => x.key === k); return r && (ctx.linked(c).sheet.resources_used[k] || 0) < r.max; };
+    c.cheatDeath = (d.cheat_death || []).filter(x => left(x.key));
   }
 }
 
@@ -386,6 +397,7 @@ function applyGroup(kind) {
   remember(`${what} ${amount} to ${T.length} creature${T.length > 1 ? 's' : ''}`);
   let msgs;
   if (kind === 'dmg') {
+    for (const t of T) t.dr = amount - R.reduceDamage(t.c, S.group.type, amount);     // Heavy Armor Master
     const r = R.damageMany(ctx, T, amount, false, S.group.onSave === 'none');
     msgs = [r.dealt.map((d, i) => `${d.name} ${d.n}${T[i].mod !== 'normal' ? ` (${(R.DAMAGE_MODS[T[i].mod] || 'resistant + vulnerable').toLowerCase()})` : ''}`).join(', ') + '.', ...r.msgs];
   } else msgs = [`Healed ${T.map(t => who(t.c)).join(', ')} by ${amount}.`, ...T.flatMap(t => R.heal(ctx, t.c, amount))];
@@ -636,7 +648,7 @@ function applyAttack(c) {
   // resistance halves the total of each damage type (not each part), so add the parts up per type first
   const byType = new Map();
   for (const p of rolls) { const k = (p.t || '').toLowerCase(); byType.set(k, (byType.get(k) || 0) + p.r.total); }
-  const applied = [...byType].map(([type, rolled]) => ({ t: type, m: mod === 'auto' ? R.defenseMod(R.defensesOf(t), type) : mod, rolled }));
+  const applied = [...byType].map(([type, rolled]) => ({ t: type, m: mod === 'auto' ? R.defenseMod(R.defensesOf(t), type) : mod, rolled: R.reduceDamage(t, type, rolled) }));
   const n = applied.reduce((sum, p) => sum + R.adjustDamage(p.rolled, { mod: p.m }), 0);
   const notes = applied.filter(p => p.m !== 'normal').map(p => `${p.t ? p.t.toLowerCase() + ' ' : ''}${(R.DAMAGE_MODS[p.m] || 'resistant + vulnerable').toLowerCase()}`);
   if (smite && ch) scheduleCharSave(c.charId);
@@ -1010,7 +1022,7 @@ async function onInspectClick(e) {
     const n = amountFrom('#insAmt', `${LABEL[a]} ${who(c)}`);
     if (!n) return;
     remember(`${LABEL[a]} ${who(c)} ${n}`);
-    changed(c, a === 'dmg' ? hurt(c, n, $('#insMod').value, e.shiftKey) : a === 'heal' ? R.heal(ctx, c, n) : R.giveTemp(ctx, c, n));
+    changed(c, a === 'dmg' ? hurt(c, n, $('#insMod').value, e.shiftKey, $('#insType')?.value) : a === 'heal' ? R.heal(ctx, c, n) : R.giveTemp(ctx, c, n));
     return (renderTracker(), renderInspector());
   }
   const UNDO = {
@@ -1029,7 +1041,7 @@ async function onInspectClick(e) {
       const last = S.atk.last, t = last && S.enc.c.find(x => x.id === last.target);
       if (!t) break;
       const type = last.parts[0]?.t || '';
-      const n = R.adjustDamage(R.grazeDamage(last.extra.mod), { mod: R.defenseMod(R.defensesOf(t), type) });
+      const n = R.adjustDamage(R.reduceDamage(t, type, R.grazeDamage(last.extra.mod)), { mod: R.defenseMod(R.defensesOf(t), type) });
       remember(`Graze: ${n} damage to ${who(t)}`);
       S.atk.last = null;
       changed(t, [`Graze: ${who(t)} takes ${n}.`, ...(n > 0 ? R.damage(ctx, t, n) : [])]);

@@ -288,6 +288,14 @@ export function damage(ctx, c, amount, crit = false) {
   st.taken[c.id] = (st.taken[c.id] || 0) + absorbed + (before - hp(ctx, c));
   if (!wasDown && hp(ctx, c) === 0 && c.kind === 'pc') st.downs[c.id] = (st.downs[c.id] || 0) + 1;
   if (!wasDown && hp(ctx, c) === 0 && c.kind === 'foe') (st.defeated ||= {})[c.id] = { name, xp: +c.xp || 0 };
+  if (!wasDown && hp(ctx, c) === 0 && c.kind === 'pc' && rest - before < maxHp(ctx, c) && c.cheatDeath?.length) {
+    // Relentless Endurance, Undying Sentinel...: drop to some HP instead of 0 (the tracker spends the use)
+    const cd = c.cheatDeath.shift();
+    set(ctx, c, 'hp', Math.min(maxHp(ctx, c), cd.hp));
+    (c.spent ||= []).push(cd.key);
+    msgs.push(`${cd.from}: ${name} drops to ${hp(ctx, c)} HP instead of 0.`);
+    return msgs;
+  }
   if (!wasDown && hp(ctx, c) === 0) {
     if (c.kind === 'pc' && rest - before >= maxHp(ctx, c)) {
       if (!hasCond(c, 'Unconscious')) c.conds.push({ n: 'Unconscious', d: null });
@@ -380,6 +388,13 @@ export function defensesOf(c) {
   return out === d && !c.def ? null : out;
 }
 
+/** Damage after damage reduction (Heavy Armor Master: − PB from bludgeoning, piercing and slashing). */
+export function reduceDamage(c, type, amount) {
+  const t = String(type || '').toLowerCase();
+  const dr = (c.dr || []).filter(d => d.types.includes(t)).reduce((n, d) => n + d.amount, 0);
+  return Math.max(0, amount - dr);
+}
+
 /** How a creature with defenses `def` takes damage of `type`: 'immune', 'resist', 'vuln', 'resist+vuln' or 'normal'. */
 export function defenseMod(def, type) {
   const t = String(type || '').toLowerCase();
@@ -399,8 +414,9 @@ export function saveRule(c, ab) {
     if (x) return { fail: x.n };
   }
   const dis = ab === 'dex' && hasCond(c, 'Restrained') ? 'Restrained' : null;
-  const adv = ab === 'dex' ? c.conds.find(x => ['Dodging', 'Hasted'].includes(x.n))?.n
-    || (c.dexSaveAdv && !c.conds.some(x => INCAPACITATING.includes(x.n)) ? c.dexSaveAdv : null) : null;   // Danger Sense
+  const adv = (ab === 'dex' ? c.conds.find(x => ['Dodging', 'Hasted'].includes(x.n))?.n
+    || (c.dexSaveAdv && !c.conds.some(x => INCAPACITATING.includes(x.n)) ? c.dexSaveAdv : null) : null)   // Danger Sense
+    || (c.saveAdv?.includes(ab) ? 'feature' : null);                   // Gnomish Cunning and the like
   if (dis && adv) return {};                                          // Advantage and Disadvantage cancel
   return dis ? { dis } : adv ? { adv } : {};
 }
@@ -427,7 +443,7 @@ export function rollSave({ dice, bonus, dc, rule = {}, extra = 0 }) {
 export function damageMany(ctx, targets, amount, crit = false, none = false) {
   const msgs = [], dealt = [];
   for (const t of targets) {
-    const n = adjustDamage(amount, { ...t, none });
+    const n = adjustDamage(Math.max(0, amount - (t.dr || 0)), { ...t, none });     // t.dr: damage reduction
     dealt.push({ name: nameOf(ctx, t.c), n });
     if (n > 0) msgs.push(...damage(ctx, t.c, n, crit));
   }

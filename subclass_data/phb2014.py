@@ -246,7 +246,7 @@ add("ancients-2014", S("paladin", "Oath of the Ancients", P14, [
     F(3, "Channel Divinity", "Nature's Wrath: a creature within 10 ft makes a Str or Dex save or is Restrained. Turn the Faithless: fey and fiends within 30 ft make a Wis save or are Turned."),
     F(7, "Aura of Warding", "You and friendly creatures within 10 ft (30 ft at 18) have resistance to damage from spells."),
     F(15, "Undying Sentinel", "When you drop to 0 HP and don't die outright, drop to 1 HP instead. Once per Long Rest. You don't age.",
-      resource=("undying_sentinel", "Undying Sentinel", 1, LR)),
+      resource=("undying_sentinel", "Undying Sentinel", 1, LR), cheat_death=dict(key="undying_sentinel", hp="1")),
     F(20, "Elder Champion", "Action, 1 minute: regain 10 HP at the start of each turn, cast 1-action Paladin spells as a Bonus Action, and enemies within 10 ft have Disadvantage on saves against your spells and Channel Divinity. Once per Long Rest.",
       resource=("elder_champion", "Elder Champion", 1, LR)),
 ]))
