@@ -19,6 +19,7 @@ The catalog lives in subclass_data.py. A feature is F(level, name, summary, **ef
   hp_per_level=1                    extra maximum HP per class level (shown as a reminder: max HP is typed in)
   spells={level: [names]}           spells always prepared from that class level
   summon="key"                      can summon a creature (see summons in rules.py)
+  third_caster="int"                one-third caster (Eldritch Knight, Arcane Trickster): slots and casting ability
   options=[(key, name, summary, {effects}), ...]  a choice the player makes; the chosen option's effects apply
 Formulas use: level, pb, half (level // 2), str, dex, con, int, wis, cha (modifiers), and max(...).
 Dice templates use the same names in braces: "1d6+{half}".
@@ -87,7 +88,8 @@ def effects(sheet, cls, level, pb, mods):
     choices = sheet.get("choices") or {}
     out = {"key": sheet["subclass"], "name": sc["name"], "source": sc["source"], "features": [], "warnings": [],
            "armor": [], "weapons": [], "ac_unarmored": [], "crit": 20, "resources": [], "riders": [], "checks": [],
-           "init": 0, "speed": 0, "attacks": [], "magic_weapon_ability": None, "hp_per_level": 0, "spells": {}, "summons": []}
+           "init": 0, "speed": 0, "attacks": [], "magic_weapon_ability": None, "hp_per_level": 0, "spells": {}, "summons": [],
+           "third_caster": None}
     if sc["class"] != cls:
         out["warnings"].append(f"{sc['name']} is a {sc['class'].title()} subclass, but the class is {cls.title() or 'not set'}.")
         return out
@@ -149,3 +151,5 @@ def _collect(out, e, v, feature):
             out["spells"].setdefault(lv, []).extend(names)
     if "summon" in e:
         out["summons"].append(e["summon"])
+    if "third_caster" in e:
+        out["third_caster"] = e["third_caster"]

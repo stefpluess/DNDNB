@@ -119,7 +119,7 @@ def update_character(req, _q, cid):
     if body.get("apply_class_defaults"):
         rules.apply_class_defaults(sheet)
     if body.get("apply_slots"):
-        for slot, n in zip(sheet["slots"], rules.default_slots(sheet.get("class_name") or "", sheet.get("level") or 1)):
+        for slot, n in zip(sheet["slots"], rules.derive(sheet)["suggested_slots"]):
             slot["max"], slot["used"] = n, min(slot["used"], n)
     report = None
     if body.get("rest") == "long":

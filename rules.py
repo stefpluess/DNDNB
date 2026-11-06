@@ -121,6 +121,10 @@ FULL_CASTER_SLOTS = {
 }
 FULL_CASTERS = {"bard", "cleric", "druid", "sorcerer", "wizard"}
 HALF_CASTERS = {"paladin", "ranger", "artificer"}   # Artificer slots round up: the same table
+# Eldritch Knight / Arcane Trickster (one-third casters), by Fighter or Rogue level
+THIRD_CASTER_SLOTS = {3: [2], 4: [3], 5: [3], 6: [3], 7: [4, 2], 8: [4, 2], 9: [4, 2], 10: [4, 3], 11: [4, 3], 12: [4, 3],
+                      13: [4, 3, 2], 14: [4, 3, 2], 15: [4, 3, 2], 16: [4, 3, 3], 17: [4, 3, 3], 18: [4, 3, 3],
+                      19: [4, 3, 3, 1], 20: [4, 3, 3, 1]}
 # warlock level -> (number of pact slots, slot level)
 PACT_SLOTS = {1: (1, 1), 2: (2, 1), 3: (2, 2), 4: (2, 2), 5: (2, 3), 6: (2, 3), 7: (2, 4), 8: (2, 4),
               9: (2, 5), 10: (2, 5), **{l: (3, 5) for l in range(11, 17)}, **{l: (4, 5) for l in range(17, 21)}}
@@ -212,11 +216,14 @@ def apply_class_defaults(sheet):
     return sheet
 
 
-def default_slots(class_name, level):
-    """Slot maxima for a single-class character. Warlock pact slots are put at their slot level."""
+def default_slots(class_name, level, third_caster=False):
+    """Slot maxima for a single-class character. Warlock pact slots are put at their slot level.
+    third_caster: an Eldritch Knight or Arcane Trickster."""
     cls, level = class_name.strip().lower(), max(1, min(20, int(level)))
     out = [0] * 9
-    if cls in FULL_CASTERS:
+    if third_caster:
+        table = THIRD_CASTER_SLOTS.get(level, [])
+    elif cls in FULL_CASTERS:
         table = FULL_CASTER_SLOTS[level]
     elif cls in HALF_CASTERS:  # 2024: Paladins and Rangers cast from level 1
         table = FULL_CASTER_SLOTS[math.ceil(level / 2)]
@@ -639,7 +646,7 @@ def derive(sheet):
     })
 
     # subclass attacks (armor weapons, psychic blades...), then the subclass's critical range and damage riders
-    spell_ab = sheet.get("spell_ability") or (CLASS_DEFAULTS.get(cls, (None,) * 5)[3])
+    spell_ab = sheet.get("spell_ability") or (CLASS_DEFAULTS.get(cls, (None,) * 5)[3]) or (sub or {}).get("third_caster")
     for a in (sub or {}).get("attacks", []):
         ab = {"spell": spell_ab or "int", "best": "dex" if m["dex"] > m["str"] else "str"}.get(a.get("ability"), a.get("ability") or "str")
         hit = [(ABILITY_NAMES[ab], m[ab]), ("Proficiency", pb)] + ([("Exhaustion", -pen)] if pen else [])
@@ -669,7 +676,7 @@ def derive(sheet):
 
     # spellcasting
     spell = None
-    sa = sheet.get("spell_ability") or (CLASS_DEFAULTS.get(cls, (None,) * 5)[3])
+    sa = sheet.get("spell_ability") or (CLASS_DEFAULTS.get(cls, (None,) * 5)[3]) or (sub or {}).get("third_caster")
     if sa in m:
         spell = {"ability": sa,
                  "dc": 8 + pb + m[sa] + _mod_total(active, "spell_dc"),
@@ -695,7 +702,7 @@ def derive(sheet):
         "speed": speed, "passive_perception": passive,
         "saves": saves, "skills": skills, "attacks": attacks, "spell": spell,
         "attuned": attuned, "warnings": warnings,
-        "suggested_slots": default_slots(sheet.get("class_name") or "", level),
+        "suggested_slots": default_slots(sheet.get("class_name") or "", level, bool((sub or {}).get("third_caster"))),
         "hit_dice": {"die": (CLASS_DEFAULTS.get(cls) or (None,) * 5)[4], "total": level,
                      "left": max(0, level - int(sheet.get("hit_dice_used") or 0))},
         "resources": class_resources(cls, level, m, sheet.get("resources_used"), (sub or {}).get("resources", [])),

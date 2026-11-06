@@ -131,6 +131,26 @@ class OnTheSheet(unittest.TestCase):
         self.assertNotIn("riders", atk["Quarterstaff"])
         self.assertEqual(atk["Unarmed Strike"]["riders"][0]["dice"], "1d6+3")
 
+    def test_eldritch_knight_is_a_third_caster(self):
+        s = char("fighter", 7, "eldritch-knight-2024", int=14)
+        d = rules.derive(s)
+        self.assertEqual((d["suggested_slots"][:3], d["spell"]["ability"], d["spell"]["dc"]), ([4, 2, 0], "int", 8 + 3 + 2))
+        self.assertEqual(rules.derive(char("rogue", 3, "arcane-trickster-2024"))["suggested_slots"][:2], [2, 0])
+
+    def test_gloom_stalker_initiative_and_dreadful_strike(self):
+        s = char("ranger", 3, "gloom-stalker-2024", dex=14, wis=16)
+        d = rules.derive(s)
+        self.assertEqual(d["initiative"], 2 + 3)
+        self.assertEqual(next(r for r in d["resources"] if r["key"] == "dreadful_strike")["max"], 3)
+
+    def test_valor_training_and_dance_ac(self):
+        v = rules.derive(char("bard", 3, "valor-2024"))
+        self.assertFalse([w for w in v["warnings"] if "Not proficient" in w])
+        d = char("bard", 3, "dance-2024", dex=16, cha=16)
+        self.assertEqual(rules.derive(d)["ac"], 10 + 3 + 3)
+        d["inventory"] = [{"uid": "s", "name": "Shield", "type": "shield", "equipped": True, "armor": {"category": "Shield", "base": 2}}]
+        self.assertEqual(rules.derive(d)["ac"], 10 + 3)          # no Dazzling Footwork with a shield (and no shield training)
+
     def test_wrong_class_or_level_warns(self):
         self.assertTrue([w for w in rules.derive(char("wizard", 5, "champion-2024"))["warnings"] if "Fighter subclass" in w])
         self.assertTrue([w for w in rules.derive(char("fighter", 2, "champion-2024"))["warnings"] if "starts at" in w])
