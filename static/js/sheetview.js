@@ -19,7 +19,8 @@ export function derivedHtml(ch, { compact = false } = {}) {
     const notes = [a.equipped ? '' : 'not equipped', a.mastery && a.mastery_known ? `Mastery: ${a.mastery}` : '',
       a.range, a.versatile, a.note].filter(Boolean).map(esc).join(' · ');
     const hitTitle = a.hit_parts.map(([k, v]) => `${k} ${signed(v)}`).join(', ');
-    const dmg = a.damage_dice ? `${a.damage_dice}${a.damage_bonus ? plusMinus(a.damage_bonus) : ''}` : '';
+    // flat damage (an Unarmed Strike without Martial Arts) still rolls as a number
+    const dmg = a.damage_dice ? `${a.damage_dice}${a.damage_bonus ? plusMinus(a.damage_bonus) : ''}` : a.damage_bonus > 0 ? String(a.damage_bonus) : '';
     return `<div class="atk ${a.equipped ? '' : 'off'}">
       <div class="top-line"><span class="nm">${esc(a.name)}</span>
         ${roll(`1d20${plusMinus(a.to_hit)}`, 'atk', `${name} · ${a.name} to hit`, signed(a.to_hit), 'btn roll', hitTitle, attackAttrs(a.name, [{ e: dmg, t: a.damage_type || '' }]))}
@@ -31,7 +32,7 @@ export function derivedHtml(ch, { compact = false } = {}) {
     `<span class="${v.proficient ? 'p' : ''}">${roll(`1d20${plusMinus(v.bonus)}`, 'check', `${name} ${UP(a)} save`, UP(a))}<span class="mono">${signed(v.bonus)}</span></span>`).join('');
 
   const skills = compact ? '' : `<div class="blk"><h4>Skills</h4><div class="kv">${Object.entries(d.skills).map(([k, v]) =>
-    `<span class="${v.proficient ? 'p' : ''}">${roll(`1d20${plusMinus(v.bonus)}`, 'check', `${name} ${label(k)}`, label(k) + (v.expertise ? ' ★' : ''))}<span class="mono">${signed(v.bonus)}</span></span>`).join('')}</div></div>`;
+    `<span class="${v.proficient ? 'p' : ''}">${roll(`1d20${plusMinus(v.bonus)}`, 'check', `${name} ${label(k)}`, label(k) + (v.expertise ? ' ★' : '') + (v.disadvantage ? ` <span class="dis" title="Disadvantage: ${esc(v.disadvantage)}">Dis.</span>` : ''))}<span class="mono">${signed(v.bonus)}</span></span>`).join('')}</div></div>`;
 
   const spell = d.spell ? `<div class="tiles">
       <div class="tile"><b>${d.spell.dc}</b><small>SPELL DC</small></div><div class="tile"><b>${signed(d.spell.attack)}</b><small>SPELL ATK</small></div>
@@ -45,7 +46,7 @@ export function derivedHtml(ch, { compact = false } = {}) {
       <div class="tile"><b>${d.speed}</b><small>SPEED</small></div><div class="tile"><b>${d.passive_perception}</b><small>PASSIVE PER.</small></div></div>
     ${spell}
     <div class="blk"><h4>Attacks <span class="hint">shift-click damage for a crit</span></h4>${attacks}
-      ${d.mastery_slots ? `<p class="hint">Weapon Mastery: ${(s.prof.mastery || []).length} of ${d.mastery_slots} known at level 1 (tick them in the inventory).</p>` : ''}</div>
+      ${d.mastery_slots ? `<p class="hint">Weapon Mastery: ${(s.prof.mastery || []).length} of ${d.mastery_slots} known at level ${d.level} (tick them in the inventory).</p>` : ''}</div>
     <div class="blk"><h4>Saving throws</h4><div class="kv kv3">${saves}</div></div>
     ${skills}`;
 }

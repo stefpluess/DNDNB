@@ -44,7 +44,25 @@ CLASS_DEFAULTS = {
     "warlock":   (["light"],                               ["simple"],                           ["wis", "cha"], "cha", 8),
     "wizard":    ([],                                      ["simple"],                           ["int", "wis"], "int", 6),
 }
-MASTERY_CLASSES = {"barbarian": 2, "fighter": 3, "paladin": 2, "ranger": 2, "rogue": 2}
+# Weapon Mastery: number of weapons known, as (from level, count) steps (2024 class tables).
+MASTERY_STEPS = {"barbarian": [(1, 2), (4, 3), (10, 4)], "fighter": [(1, 3), (4, 4), (10, 5), (16, 6)],
+                 "paladin": [(1, 2)], "ranger": [(1, 2)], "rogue": [(1, 2)]}
+# Monk Martial Arts die by level.
+MARTIAL_ARTS_DIE = [(1, "1d6"), (5, "1d8"), (11, "1d10"), (17, "1d12")]
+
+
+def _by_level(steps, level, default=0):
+    """The value of the last (from level, value) step reached."""
+    return next((v for lv, v in reversed(steps) if level >= lv), default)
+
+
+def mastery_slots(cls, level):
+    return _by_level(MASTERY_STEPS.get(cls, []), level)
+
+
+def _avg(dice):
+    m = re.fullmatch(r"(\d*)d(\d+)", str(dice or "").strip().lower())
+    return (int(m.group(1) or 1) * (int(m.group(2)) + 1) / 2) if m else 0
 
 FULL_CASTER_SLOTS = {
     1: [2], 2: [3], 3: [4, 2], 4: [4, 3], 5: [4, 3, 2], 6: [4, 3, 3], 7: [4, 3, 3, 1], 8: [4, 3, 3, 2],
@@ -329,9 +347,10 @@ def derive(sheet):
             ac_parts.append(("Wisdom (Unarmored Defense)", m["wis"]))
     if shield:
         a = shield.get("armor") or {}
-        ac_parts.append((shield["name"], int(a.get("base", 2)) + int(shield.get("bonus") or 0)))
-        if "shields" not in {p.lower() for p in prof["armor"]}:
-            warnings.append("Not proficient with shields.")
+        if "shields" in {p.lower() for p in prof["armor"]}:
+            ac_parts.append((shield["name"], int(a.get("base", 2)) + int(shield.get("bonus") or 0)))
+        else:  # 2024: a Shield without training gives no AC
+            warnings.append(f"No Shield training: {shield['name']} gives no AC.")
     for item in active:
         mods = item.get("mods") or {}
         if mods.get("ac"):
@@ -356,6 +375,8 @@ def derive(sheet):
         p = s in prof["skills"] or exp
         skills[s] = {"bonus": m[a] + (pb * 2 if exp else pb if p else 0) - pen, "ability": a,
                      "proficient": p, "expertise": exp}
+    if armor and (armor.get("armor") or {}).get("stealth_dis"):
+        skills["stealth"]["disadvantage"] = armor["name"]
     passive = 10 + skills["perception"]["bonus"] + pen   # passive scores aren't d20 Tests
 
     # speed
@@ -370,13 +391,19 @@ def derive(sheet):
     weapons = [i for i in sheet["inventory"] if i.get("type") == "weapon" and i.get("weapon")]
     melee_equipped = [i for i in weapons if i.get("equipped") and i["weapon"].get("range") == "Melee"]
     attacks = []
+    # 2024 Monk Martial Arts: while unarmored and without a shield, Monk weapons (Simple melee weapons and
+    # Martial melee weapons with Light) and Unarmed Strikes can use Dex and the Martial Arts die
+    martial_arts = cls == "monk" and not armor and not shield
+    ma_die = _by_level(MARTIAL_ARTS_DIE, level, "1d6") if martial_arts else None
     for item in weapons:
         w = item["weapon"]
         props = set(w.get("properties") or [])
         ranged = w.get("range") == "Ranged"
+        monk_weapon = martial_arts and not ranged and (
+            (w.get("category") or "").lower() == "simple" or "light" in props)
         if ranged:
             ab = "dex"
-        elif "finesse" in props:
+        elif "finesse" in props or monk_weapon:
             ab = "dex" if m["dex"] > m["str"] else "str"
         else:
             ab = "str"
@@ -404,6 +431,8 @@ def derive(sheet):
         to_hit = sum(v for _, v in hit_parts)
         dmg_bonus = sum(v for _, v in dmg_parts)
         dice = w.get("dice")
+        if monk_weapon and _avg(ma_die) > _avg(dice):
+            dice = ma_die
         entry = {
             "uid": item["uid"], "name": item["name"] + (f" +{magic}" if magic else ""),
             "equipped": bool(item.get("equipped")), "ability": ab, "proficient": proficient,
@@ -423,8 +452,23 @@ def derive(sheet):
                 entry["versatile"] += " (not with a shield)"
         if not proficient:
             entry["note"] = "Not proficient"
+        if monk_weapon:
+            entry["note"] = "Monk weapon (Martial Arts)"
         attacks.append(entry)
     attacks.sort(key=lambda a: (not a["equipped"], a["name"]))
+    # everyone can make an Unarmed Strike: Str + PB to hit, 1 + Str bludgeoning (Monks: Martial Arts)
+    ua = "dex" if martial_arts and m["dex"] > m["str"] else "str"
+    ua_hit = [(ABILITY_NAMES[ua], m[ua]), ("Proficiency", pb)] + ([("Exhaustion", -pen)] if pen else [])
+    attacks.append({
+        "uid": "unarmed", "name": "Unarmed Strike", "equipped": True, "ability": ua, "proficient": True,
+        "to_hit": sum(v for _, v in ua_hit), "hit_parts": ua_hit,
+        "damage_dice": ma_die, "damage_bonus": m[ua] + (0 if ma_die else 1), "damage_type": "bludgeoning",
+        "damage": (f"{ma_die}{signed(m[ua]) if m[ua] else ''} bludgeoning" if ma_die
+                   else f"{max(0, 1 + m[ua])} bludgeoning"),
+        "dmg_parts": [(ABILITY_NAMES[ua], m[ua])] + ([] if ma_die else [("Unarmed", 1)]),
+        "range": None, "versatile": None, "mastery": None, "mastery_known": False,
+        "note": "Martial Arts" if ma_die else "Or Grapple / Shove: DC 8 + Str + PB",
+    })
 
     # spellcasting
     spell = None
@@ -443,7 +487,7 @@ def derive(sheet):
         "scores": scores, "mods": m, "score_notes": score_notes,
         "ac": ac, "ac_parts": ac_parts,
         "initiative": m["dex"] + int(sheet.get("init_misc") or 0) - pen,
-        "exhaustion": exh, "mastery_slots": MASTERY_CLASSES.get(cls, 0),
+        "exhaustion": exh, "mastery_slots": mastery_slots(cls, level),
         "speed": speed, "passive_perception": passive,
         "saves": saves, "skills": skills, "attacks": attacks, "spell": spell,
         "attuned": attuned, "warnings": warnings,

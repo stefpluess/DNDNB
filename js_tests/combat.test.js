@@ -42,9 +42,11 @@ test('a PC at 0 HP falls unconscious and loses concentration', () => {
 
 test('massive damage kills outright', () => {
   const c = mk({ kind: 'pc', hp: 5, max: 10 }), ctx = fight([c]);
-  assert.match(R.damage(ctx, c, 15).join(' '), /dies outright/);   // 10 left over after reaching 0 = max HP
-  const d = mk({ kind: 'pc', hp: 5, max: 10 });
-  assert.doesNotMatch(R.damage(fight([d]), d, 14).join(' '), /dies outright/);
+  assert.match(R.damage(ctx, c, 15).join(' '), /dies \(massive damage/);   // 10 left over after reaching 0 = max HP
+  assert.equal(R.lifeState(ctx, c), 'dead');
+  const d = mk({ kind: 'pc', hp: 5, max: 10 }), dctx = fight([d]);
+  assert.doesNotMatch(R.damage(dctx, d, 14).join(' '), /dies/);
+  assert.equal(R.lifeState(dctx, d), 'dying');
 });
 
 test('damage at 0 HP: one failure, two from a critical hit', () => {
@@ -92,7 +94,7 @@ test('three successes means stable, three failures means dead', () => {
   const c = mk({ kind: 'pc', hp: 0, ds: { s: 2, f: 2 } }), ctx = fight([c]);
   assert.match(R.deathSave(ctx, c, 15).msgs[0], /stable/);
   const d = mk({ kind: 'pc', hp: 0, ds: { s: 0, f: 2 } });
-  assert.match(R.deathSave(fight([d]), d, 5).msgs[0], /died/);
+  assert.match(R.deathSave(fight([d]), d, 5).msgs[0], /dies \(three death save failures\)/);
 });
 
 // ---------- linked PCs ----------
@@ -125,6 +127,47 @@ test('one roll damages several creatures, each with its own save and resistance'
   const { dealt } = R.damageMany(ctx, [{ c: a }, { c: b, half: true }, { c, mod: 'immune' }], 21);
   assert.deepEqual(dealt, [{ name: 'A', n: 21 }, { name: 'B', n: 10 }, { name: 'C', n: 0 }]);
   assert.deepEqual([a.hp, b.hp, c.hp], [9, 20, 30]);
+});
+
+test('damage at 0 HP that equals the HP maximum kills', () => {
+  const c = mk({ kind: 'pc', hp: 0, max: 10 }), ctx = fight([c]);
+  assert.match(R.damage(ctx, c, 10).join(' '), /dies/);
+  assert.ok(R.isDead(c));
+  const d = mk({ kind: 'pc', hp: 0, max: 10 }), dctx = fight([d]);
+  R.damage(dctx, d, 9);
+  assert.deepEqual([R.isDead(d), d.ds.f], [false, 1]);
+});
+
+test('a stable character that takes damage is dying again', () => {
+  const c = mk({ kind: 'pc', hp: 0, ds: { s: 3, f: 0 } }), ctx = fight([c]);
+  assert.equal(R.lifeState(ctx, c), 'stable');
+  assert.match(R.deathSave(ctx, c, 5).msgs[0], /stable: no death saves/);   // no save while stable
+  assert.match(R.damage(ctx, c, 2).join(' '), /no longer stable/);
+  assert.deepEqual([c.ds, R.lifeState(ctx, c)], [{ s: 0, f: 1 }, 'dying']);
+});
+
+test('only dying characters are asked for death saves; the dead are skipped', () => {
+  const stable = mk({ name: 'S', kind: 'pc', hp: 0, init: 20, ds: { s: 3, f: 0 } });
+  const dead = mk({ name: 'D', kind: 'pc', hp: 0, init: 15, ds: { s: 0, f: 3 } });
+  const dying = mk({ name: 'Y', kind: 'pc', hp: 0, init: 10 });
+  const ctx = fight([stable, dead, dying]);
+  assert.deepEqual(R.step(ctx, 1), []);                           // the stable one: no prompt
+  assert.match(R.step(ctx, 1).join(' '), /Y is dying/);          // the dead one is skipped
+  assert.equal(activeName(ctx), 'Y');
+});
+
+test("the dead can't be healed, only revived", () => {
+  const c = mk({ kind: 'pc', hp: 0, ds: { s: 1, f: 3 }, conds: [{ n: 'Unconscious', d: null }] }), ctx = fight([c]);
+  assert.match(R.heal(ctx, c, 8).join(' '), /dead: healing does nothing/);
+  assert.equal(c.hp, 0);
+  R.revive(ctx, c, 1);
+  assert.deepEqual([c.hp, c.ds, c.dead, c.conds], [1, { s: 0, f: 0 }, false, []]);
+});
+
+test('Exhaustion 6 kills', () => {
+  const c = mk({ kind: 'pc', exh: 5 }), ctx = fight([c]);
+  R.setExhaustion(ctx, c, 6);
+  assert.equal(R.lifeState(ctx, c), 'dead');
 });
 
 // ---------- turns ----------
@@ -405,6 +448,18 @@ test('the summary counts rounds, defeated foes, XP per character, knockouts and 
   assert.deepEqual([s.defeated, s.xp, s.each], [[{ name: 'Orc', xp: 100 }], 100, 50]);
   R.damage(ctx, wolf, 99);
   assert.deepEqual([R.summary(ctx).xp, R.summary(ctx).each], [150, 75]);
+});
+
+test('concentrating on a new spell ends the old one; more targets of the same spell are fine', () => {
+  const w = mk({ name: 'W' }), a = mk({ name: 'A' }), b = mk({ name: 'B' }), ctx = fight([w, a, b]);
+  R.addCondition(ctx, a, 'Blessed', null, { src: w.id, conc: true, spell: 'Bless' });
+  R.addCondition(ctx, b, 'Blessed', null, { src: w.id, conc: true, spell: 'Bless' });
+  assert.deepEqual([a.conds.length, b.conds.length], [1, 1]);
+  assert.equal(w.conds.find(x => x.n === 'Concentrating').spell, 'Bless');
+  const msgs = R.addCondition(ctx, b, 'Paralyzed', null, { src: w.id, conc: true, spell: 'Hold Person' });
+  assert.match(msgs.join(' '), /W stops concentrating on Bless: Blessed on A, Blessed on B ended/);
+  assert.deepEqual([a.conds, b.conds.map(x => x.n)], [[], ['Paralyzed']]);
+  assert.equal(w.conds.filter(x => x.n === 'Concentrating').length, 1);
 });
 
 // ---------- names ----------

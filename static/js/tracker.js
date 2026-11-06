@@ -95,7 +95,7 @@ function chipHtml(x, i) {
   const notes = [when, x.conc && from && `ends if ${who(from)} loses concentration`,
     x.save && `${x.save.ab.toUpperCase()} save DC ${x.save.dc} at the ${x.save.when} of each of its turns ends it`,
     x.n === 'Concentrating' && 'removing it ends every effect tied to this concentration'].filter(Boolean).join('; ');
-  const small = [src && `${src.at} of ${src.name}`, x.save && `${x.save.ab.toUpperCase()} ${x.save.dc}`, x.conc && from && `${who(from)}'s conc.`].filter(Boolean).join(' · ');
+  const small = [x.n === 'Concentrating' && x.spell, src && `${src.at} of ${src.name}`, x.save && `${x.save.ab.toUpperCase()} ${x.save.dc}`, x.conc && from && `${who(from)}'s conc.`].filter(Boolean).join(' · ');
   return `<button class="chip ${x.n === 'Concentrating' ? 'conc' : ''}" data-a="rmcond" data-i="${i}" title="${esc(x.n)}: ${esc(notes)}. Click to remove.">${esc(x.n)}${x.d ? ` <b>${x.d}r</b>` : ''}${small ? `<small class="src">${esc(small)}</small>` : ''}<span aria-hidden="true">×</span></button>`;
 }
 
@@ -175,8 +175,9 @@ function resourcesHtml(c) {
 function rowHtml(c) {
   const v = R.vit(ctx, c), hp = R.hp(ctx, c), max = R.maxHp(ctx, c), temp = R.tempHp(ctx, c);
   const turn = R.turnState(S.enc, c);
-  const classes = [`cb k-${c.kind}`, c.id === S.enc.active && 'is-active', turn === 'done' && 'is-done', S.sel?.type === 'c' && S.sel.id === c.id && 'sel', hp <= 0 && 'is-down'].filter(Boolean).join(' ');
-  const tag = hp <= 0 ? (c.kind === 'pc' ? 'Dying' : 'Down') : KIND[c.kind];
+  const classes = [`cb k-${c.kind}`, c.id === S.enc.active && 'is-active', turn === 'done' && 'is-done', S.sel?.type === 'c' && S.sel.id === c.id && 'sel', (hp <= 0 || life === 'dead') && 'is-down', life === 'dead' && 'is-dead'].filter(Boolean).join(' ');
+  const life = R.lifeState(ctx, c);
+  const tag = life ? { dead: 'Dead', stable: 'Stable', dying: 'Dying', down: 'Down' }[life] : KIND[c.kind];
   const turnTag = turn === 'now' ? '<span class="turn now">Their turn</span>' : turn === 'done' ? '<span class="turn done" title="Already acted this round, or joined after its initiative had passed">✓ Acted</span>' : '';
   const rx = `<button class="rx ${c.rx ? 'used' : ''}" data-a="rx" title="Reaction ${c.rx ? 'used (comes back at the start of its turn)' : 'available'}. Click to toggle." aria-label="Reaction ${c.rx ? 'used' : 'available'}">Reaction</button>`;
   const leg = c.res?.leg ? `<span class="legmini" title="Legendary actions left this round"><small>Legendary</small>${pipsHtml(c.res.leg, 'leg', 'Legendary action')}</span>` : '';
@@ -472,10 +473,15 @@ function combatantPanel(c) {
       `<button class="pip ${p >= s.max - s.used ? 'spent' : ''}" data-a="slot" data-l="${i}" data-p="${p}" aria-label="${ordinal(i + 1)} level slot ${p + 1}"></button>`).join('')}</span></div>` : '').join('');
   } else slotHtml = '<p class="hint">No spell slots.</p>';
 
-  const deathSaves = c.kind === 'pc' && hp <= 0 ? `<div class="blk"><h4>Death saves</h4><div class="ds">
-      <div>Successes ${[1, 2, 3].map(k => `<button class="pip ${c.ds.s >= k ? 'on' : ''}" data-a="ds" data-t="s" data-v="${k}" aria-label="Success ${k}"></button>`).join('')}</div>
-      <div class="f">Failures ${[1, 2, 3].map(k => `<button class="pip ${c.ds.f >= k ? 'on' : ''}" data-a="ds" data-t="f" data-v="${k}" aria-label="Failure ${k}"></button>`).join('')}</div>
-      <button class="btn sm" data-a="dsroll">Roll death save</button></div></div>` : '';
+  const life = R.lifeState(ctx, c);
+  const dsPips = `<div>Successes ${[1, 2, 3].map(k => `<button class="pip ${c.ds.s >= k ? 'on' : ''}" data-a="ds" data-t="s" data-v="${k}" aria-label="Success ${k}"></button>`).join('')}</div>
+      <div class="f">Failures ${[1, 2, 3].map(k => `<button class="pip ${c.ds.f >= k ? 'on' : ''}" data-a="ds" data-t="f" data-v="${k}" aria-label="Failure ${k}"></button>`).join('')}</div>`;
+  const deathSaves = life === 'dead'
+    ? `<div class="blk"><h4>Dead</h4><p class="hint">Healing does nothing now. If revival magic brings ${esc(v.name)} back, use Revive (HP from the amount box, or 1).</p>
+        <div class="line"><button class="btn sm" data-a="revive">Revive</button></div></div>`
+    : c.kind === 'pc' && hp <= 0 ? `<div class="blk"><h4>Death saves${life === 'stable' ? ' <span class="hint">stable: no more saves until it takes damage</span>' : ''}</h4><div class="ds">
+      ${dsPips}
+      ${life === 'dying' ? '<button class="btn sm" data-a="dsroll">Roll death save</button>' : ''}</div></div>` : '';
 
   const sub = ch ? classLine(ch.sheet) : c.ref ? 'Monster' : KIND[c.kind];
   return `<div class="ins-head"><h2>${esc(v.name)}</h2><p>${esc(sub)} · initiative ${c.init}</p></div>
@@ -501,11 +507,12 @@ function combatantPanel(c) {
       <details class="condmore"${S.condMoreOpen ? ' open' : ''}><summary class="hint">Concentration and repeated saves</summary>
         <div class="line"><label class="hint">Ends if this creature loses concentration
           <select class="field" id="insConc"><option value="">nobody (not a concentration spell)</option>${R.sorted(S.enc).filter(x => x.id !== c.id).map(x =>
-            `<option value="${x.id}">${esc(who(x))}</option>`).join('')}</select></label></div>
+            `<option value="${x.id}">${esc(who(x))}</option>`).join('')}</select></label>
+          <label class="hint">Spell <input class="field" id="insSpell" autocomplete="off" placeholder="same as the effect" aria-label="Concentration spell"></label></div>
         <div class="line"><label class="hint">Repeats a save <select class="field" id="insSaveAb"><option value="">no save</option>${S.meta.abilities.map(a => `<option value="${a}">${a.toUpperCase()}</option>`).join('')}</select></label>
           <label class="hint">DC <input class="field tiny" type="number" min="1" id="insSaveDc"></label>
           <label class="hint">at the <select class="field" id="insSaveWhen"><option value="end">end</option><option value="start">start</option></select> of each of its turns</label></div>
-        <p class="hint">For Hold Person: add Paralyzed, pick the caster under concentration, and a Wisdom save at the end of each turn. The tracker asks for the save at the right time, and ending the caster's concentration removes the effect from everyone.</p>
+        <p class="hint">For Hold Person: add Paralyzed, pick the caster under concentration, spell "Hold Person", and a Wisdom save at the end of each turn. A caster concentrates on one spell at a time: a different spell ends the first one. The tracker asks for the save at the right time, and ending the caster's concentration removes the effect from everyone.</p>
       </details>
       <p class="hint">Blank rounds lasts until removed. For an effect another creature caused ("until the end of your next turn"), pick that creature's turn: it counts down there, and a timer set during that creature's own turn skips that turn. Adding Exhaustion raises its level by one.</p></div>
     <div class="blk"><h4>Spell slots ${ch ? '<span class="hint">from sheet</span>' : `<button class="link" data-a="editslots">${editing ? 'Done' : 'Edit'}</button>`}</h4>${slotHtml}</div>
@@ -649,7 +656,7 @@ async function onInspectClick(e) {
   const UNDO = {
     addcond: () => $('#insCond').value.trim() && `Add ${$('#insCond').value.trim()} to ${who(c)}`, rmcond: () => `Remove ${c.conds[+b.dataset.i]?.n} from ${who(c)}`,
     exhdown: () => `Lower ${who(c)}'s Exhaustion`, slot: () => `Spell slot for ${who(c)}`, ds: () => `Death save mark for ${who(c)}`,
-    dsroll: () => `Death save for ${who(c)}`, dup: () => `Duplicate ${who(c)}`, del: () => S.confirm.del === c.id && `Remove ${who(c)}`,
+    dsroll: () => `Death save for ${who(c)}`, revive: () => `Revive ${who(c)}`, dup: () => `Duplicate ${who(c)}`, del: () => S.confirm.del === c.id && `Remove ${who(c)}`,
     rx: () => `Reaction for ${who(c)}`, leg: () => `Legendary action for ${who(c)}`, lr: () => `Legendary Resistance for ${who(c)}`,
     use: () => `${c.res.uses[+b.dataset.i].name} for ${who(c)}`, day: () => `${c.res.uses[+b.dataset.i].name} for ${who(c)}`,
     recharge: () => `Recharge roll for ${who(c)}`,
@@ -677,7 +684,7 @@ async function onInspectClick(e) {
       const [at, timerSrc] = ($('#insWhen')?.value || 'own').split(':');
       const concSrc = S.condMoreOpen ? $('#insConc')?.value : '';
       const saveAb = S.condMoreOpen ? $('#insSaveAb')?.value : '';
-      const opts = { at, src: concSrc || timerSrc, conc: !!concSrc };
+      const opts = { at, src: concSrc || timerSrc, conc: !!concSrc, spell: S.condMoreOpen ? $('#insSpell')?.value.trim() : '' };
       if (concSrc && timerSrc && concSrc !== timerSrc) { toast('The timer and the concentration must come from the same creature.'); break; }
       if (saveAb) opts.save = { ab: saveAb, dc: parseInt($('#insSaveDc').value, 10), when: $('#insSaveWhen').value };
       if (saveAb && !(opts.save.dc > 0)) { toast('Enter the save DC.'); break; }
@@ -689,7 +696,12 @@ async function onInspectClick(e) {
     case 'exhdown': changed(c, R.setExhaustion(ctx, c, R.exhaustion(ctx, c) - 1)); break;
     case 'slot': R.toggleSlot(R.vit(ctx, c).slots[+b.dataset.l], +b.dataset.p); changed(c); break;
     case 'editslots': S.editingSlots.has(c.id) ? S.editingSlots.delete(c.id) : S.editingSlots.add(c.id); break;
-    case 'ds': { const k = b.dataset.t, n = +b.dataset.v; c.ds[k] = c.ds[k] === n ? n - 1 : n; changed(c); break; }
+    case 'ds': { const k = b.dataset.t, n = +b.dataset.v; c.ds[k] = c.ds[k] === n ? n - 1 : n; if (k === 'f') c.dead = false; changed(c); break; }
+    case 'revive': {
+      const n = parseAmount($('#insAmt')?.value || '')?.total || 1;
+      changed(c, R.revive(ctx, c, n));
+      break;
+    }
     case 'dsroll': {
       const die = d20();
       const r = R.deathSave(ctx, c, die);

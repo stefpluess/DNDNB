@@ -27,6 +27,7 @@ RAPIER = weapon("rapier", "Rapier", "1d8", "Piercing", False, [prop("Finesse"), 
 SCIMITAR = weapon("scimitar", "Scimitar", "1d6", "Slashing", False, [prop("Finesse"), prop("Light"), prop("Nick", mastery=True)])
 LONGBOW = weapon("longbow", "Longbow", "1d8", "Piercing", False,
                  [prop("Ammunition", "Range 150/600; Arrow"), prop("Heavy"), prop("Two-Handed"), prop("Slow", mastery=True)], 150, 600)
+QUARTERSTAFF = weapon("quarterstaff", "Quarterstaff", "1d6", "Bludgeoning", True, [prop("Versatile", "1d8"), prop("Topple", mastery=True)])
 PLATE = armor("plate-armor", "Plate Armor", "heavy", 18, strength=15)
 HALF_PLATE = armor("half-plate-armor", "Half Plate Armor", "medium", 15, dex=True, cap=2)
 # Open5e really labels the Shield's armor category "heavy" (base AC 2); the rules must still see a shield
@@ -106,13 +107,13 @@ class Rules(unittest.TestCase):
         rules.apply_class_defaults(rogue)
         rogue["inventory"] = [eq("equipment", RAPIER), eq("equipment", LONGSWORD)]
         prof = {a["name"]: a["proficient"] for a in rules.derive(rogue)["attacks"]}
-        self.assertEqual(prof, {"Rapier": True, "Longsword": False})
+        self.assertEqual(prof, {"Rapier": True, "Longsword": False, "Unarmed Strike": True})
         monk = rules.blank_sheet()
         monk.update(class_name="Monk")
         rules.apply_class_defaults(monk)
         monk["inventory"] = [eq("equipment", SCIMITAR), eq("equipment", RAPIER)]
         prof = {a["name"]: a["proficient"] for a in rules.derive(monk)["attacks"]}
-        self.assertEqual(prof, {"Scimitar": True, "Rapier": False})
+        self.assertEqual(prof, {"Scimitar": True, "Rapier": False, "Unarmed Strike": True})
 
     def test_finesse_uses_better_ability(self):
         s = fighter(str=10, dex=18)
@@ -189,6 +190,48 @@ class Rules(unittest.TestCase):
         self.assertEqual(d["ac"], 10 + 2 + 2)                       # unarmored 10 + Dex 2 + shield 2
         self.assertEqual([k for k, _ in d["ac_parts"]], ["Unarmored", "Dexterity", "Shield"])
         self.assertFalse(any("heavy" in w for w in d["warnings"]))
+
+    def test_shield_without_training_gives_no_ac(self):
+        s = rules.blank_sheet()
+        s.update(class_name="Wizard")
+        rules.apply_class_defaults(s)
+        s["abilities"]["dex"] = 14
+        s["inventory"] = [eq("equipment", SHIELD)]
+        d = rules.derive(s)
+        self.assertEqual(d["ac"], 10 + 2)
+        self.assertTrue(any("No Shield training" in w for w in d["warnings"]))
+
+    def test_monk_martial_arts(self):
+        s = rules.blank_sheet()
+        s.update(class_name="Monk", level=5)
+        rules.apply_class_defaults(s)
+        s["abilities"].update(str=8, dex=16, wis=14)
+        s["inventory"] = [eq("equipment", QUARTERSTAFF), eq("equipment", RAPIER)]
+        atk = {a["name"]: a for a in rules.derive(s)["attacks"]}
+        staff = atk["Quarterstaff"]
+        self.assertEqual((staff["ability"], staff["to_hit"], staff["damage"]), ("dex", 3 + 3, "1d8+3 bludgeoning"))   # die 1d8 at level 5
+        self.assertEqual(atk["Rapier"]["proficient"], False)                         # martial, not Light: not a Monk weapon
+        self.assertEqual(atk["Unarmed Strike"]["damage"], "1d8+3 bludgeoning")
+        s["inventory"].append(eq("equipment", SHIELD))                                # no Martial Arts with a shield
+        self.assertEqual(rules.derive(s)["attacks"][0]["ability"], "str")
+
+    def test_unarmed_strike_for_everyone(self):
+        ua = next(a for a in rules.derive(fighter())["attacks"] if a["name"] == "Unarmed Strike")
+        self.assertEqual((ua["to_hit"], ua["damage"]), (3 + 3, "4 bludgeoning"))       # Str 16, PB 3; 1 + Str
+
+    def test_weapon_mastery_grows_with_level(self):
+        f = fighter()
+        self.assertEqual([rules.derive({**f, "level": lv})["mastery_slots"] for lv in (1, 4, 10, 16)], [3, 4, 5, 6])
+        b = {**fighter(), "class_name": "Barbarian"}
+        self.assertEqual([rules.derive({**b, "level": lv})["mastery_slots"] for lv in (1, 4, 10, 20)], [2, 3, 4, 4])
+        self.assertEqual(rules.derive({**f, "class_name": "Wizard"})["mastery_slots"], 0)
+
+    def test_heavy_armor_stealth_disadvantage(self):
+        s = fighter()
+        s["inventory"] = [eq("equipment", PLATE)]
+        self.assertEqual(rules.derive(s)["skills"]["stealth"]["disadvantage"], "Plate Armor")
+        s["inventory"] = []
+        self.assertNotIn("disadvantage", rules.derive(s)["skills"]["stealth"])
 
     def test_shield_saved_before_the_fix_is_repaired(self):
         s = fighter(dex=14)

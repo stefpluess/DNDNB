@@ -35,7 +35,34 @@ export const concentrationDC = damage => Math.min(30, Math.max(10, Math.floor(da
 // enc.ticks so Previous turn can put back the turn, the round and every condition timer.
 
 export const sorted = enc => [...enc.c].sort((a, b) => b.init - a.init || b.mod - a.mod || a.seq - b.seq);
-export const skippable = (ctx, c) => ctx.enc.skip && c.kind !== 'pc' && hp(ctx, c) <= 0;
+export const skippable = (ctx, c) => ctx.enc.skip && ((c.kind !== 'pc' && hp(ctx, c) <= 0) || isDead(c));
+
+// ---------- life and death (PCs) ----------
+// A PC at 0 HP is dying, stable (three successes) or dead (three failures, massive damage, Exhaustion 6).
+
+export const isDead = c => !!c.dead || (c.ds?.f || 0) >= 3;
+export const isStable = (ctx, c) => !isDead(c) && hp(ctx, c) <= 0 && (c.ds?.s || 0) >= 3;
+/** 'dead', 'stable', 'dying', 'down' (a monster at 0 HP) or null (standing). */
+export function lifeState(ctx, c) {
+  if (isDead(c)) return 'dead';
+  if (hp(ctx, c) > 0) return null;
+  if (c.kind !== 'pc') return 'down';
+  return isStable(ctx, c) ? 'stable' : 'dying';
+}
+function die(ctx, c, why) {
+  c.dead = true;
+  c.conds = c.conds.filter(x => x.n !== 'Concentrating');
+  return [`${nameOf(ctx, c)} dies${why ? ` (${why})` : ''}.`];
+}
+
+/** Revival magic (Revivify, Raise Dead...): back to life with `amount` HP, death saves cleared. */
+export function revive(ctx, c, amount = 1) {
+  c.dead = false;
+  c.ds = { s: 0, f: 0 };
+  set(ctx, c, 'hp', Math.max(1, Math.min(maxHp(ctx, c), amount)));
+  c.conds = c.conds.filter(x => x.n !== 'Unconscious');
+  return [`${nameOf(ctx, c)} returns to life with ${hp(ctx, c)} HP.`];
+}
 
 /** Who has gone this round. Encounters saved before enc.acted existed: everyone above the active creature. */
 export function actedIds(enc) {
@@ -98,7 +125,7 @@ function restoreSnapshot(enc, snap) {
 
 function dyingNote(ctx) {
   const cur = ctx.enc.c.find(c => c.id === ctx.enc.active);
-  return cur && cur.kind === 'pc' && hp(ctx, cur) <= 0 ? [`${nameOf(ctx, cur)} is dying: roll a death save.`] : [];
+  return cur && lifeState(ctx, cur) === 'dying' ? [`${nameOf(ctx, cur)} is dying: roll a death save.`] : [];
 }
 
 /** The first creature in initiative order that hasn't acted this round and isn't skipped. */
@@ -237,15 +264,20 @@ export function groupNames(enc, base, count) {
 export function damage(ctx, c, amount, crit = false) {
   const name = nameOf(ctx, c);
   const msgs = [];
+  if (c.kind === 'pc' && isDead(c)) return [`${name} is dead.`];
   const wasDown = hp(ctx, c) <= 0;
   const absorbed = Math.min(tempHp(ctx, c), amount);
   set(ctx, c, 'temp', tempHp(ctx, c) - absorbed);
   const rest = amount - absorbed;
   const before = hp(ctx, c);
   if (wasDown && c.kind === 'pc' && rest > 0) {
+    // 2024: damage at 0 HP is a death save failure (two from a critical hit), and it ends being stable;
+    // if it equals or exceeds the HP maximum, the character dies
+    if (c.ds.s >= 3) { c.ds.s = 0; msgs.push(`${name} is no longer stable.`); }
+    if (rest >= maxHp(ctx, c)) return [...msgs, ...die(ctx, c, `${rest} damage at 0 HP is at least its HP maximum`)];
     c.ds.f = Math.min(3, c.ds.f + (crit ? 2 : 1));
     msgs.push(`${name} takes ${crit ? 'a critical hit' : 'damage'} at 0 HP: ${crit ? 'two death save failures' : 'one death save failure'}.`);
-    if (c.ds.f >= 3) msgs.push(`${name} has died.`);
+    if (c.ds.f >= 3) msgs.push(...die(ctx, c, 'three death save failures'));
   }
   set(ctx, c, 'hp', Math.max(0, before - rest));
   const st = ctx.enc.stats ||= { taken: {}, downs: {} };
@@ -254,7 +286,10 @@ export function damage(ctx, c, amount, crit = false) {
   if (!wasDown && hp(ctx, c) === 0 && c.kind === 'pc') st.downs[c.id] = (st.downs[c.id] || 0) + 1;
   if (!wasDown && hp(ctx, c) === 0 && c.kind === 'foe') (st.defeated ||= {})[c.id] = { name, xp: +c.xp || 0 };
   if (!wasDown && hp(ctx, c) === 0) {
-    if (c.kind === 'pc' && rest - before >= maxHp(ctx, c)) msgs.push(`Massive damage: ${name} dies outright.`);
+    if (c.kind === 'pc' && rest - before >= maxHp(ctx, c)) {
+      if (!hasCond(c, 'Unconscious')) c.conds.push({ n: 'Unconscious', d: null });
+      return [...msgs, ...die(ctx, c, 'massive damage: the damage left after reaching 0 HP is at least its HP maximum')];
+    }
     if (c.kind === 'pc') {
       msgs.push(`${name} drops to 0 HP.`);
       if (!hasCond(c, 'Unconscious')) c.conds.push({ n: 'Unconscious', d: null });
@@ -298,6 +333,7 @@ export function damageMany(ctx, targets, amount, crit = false) {
 }
 
 export function heal(ctx, c, amount) {
+  if (isDead(c)) return [`${nameOf(ctx, c)} is dead: healing does nothing. Use Revive for revival magic.`];
   const wasDown = hp(ctx, c) <= 0;
   set(ctx, c, 'hp', Math.min(maxHp(ctx, c), hp(ctx, c) + amount));
   if (wasDown && hp(ctx, c) > 0) {
@@ -321,6 +357,10 @@ export function giveTemp(ctx, c, amount) {
  */
 export function deathSave(ctx, c, die) {
   const name = nameOf(ctx, c);
+  if (isDead(c) || isStable(ctx, c) || hp(ctx, c) > 0) {
+    return { total: die, outcome: 'no save needed', pen: 0, cls: '',
+      msgs: [isDead(c) ? `${name} is dead.` : hp(ctx, c) > 0 ? `${name} isn't dying.` : `${name} is stable: no death saves needed.`] };
+  }
   const pen = 2 * exhaustion(ctx, c);
   const total = die - pen;
   let outcome;
@@ -328,10 +368,12 @@ export function deathSave(ctx, c, die) {
   else if (die === 1) { c.ds.f = Math.min(3, c.ds.f + 2); outcome = 'natural 1, two failures'; }
   else if (total >= 10) { c.ds.s = Math.min(3, c.ds.s + 1); outcome = 'success'; }
   else { c.ds.f = Math.min(3, c.ds.f + 1); outcome = 'failure'; }
-  const msgs = c.ds.s >= 3 ? [`${name} is stable.`] : c.ds.f >= 3 ? [`${name} has died.`]
+  const msgs = c.ds.s >= 3 ? [`${name} is stable.`] : c.ds.f >= 3 ? deathOf(ctx, c)
     : die === 20 ? [`${name} is back up with 1 HP.`] : [`Death save: ${outcome}.`];
   return { total, outcome, pen, msgs, cls: die === 20 ? 'crit' : die === 1 ? 'fumble' : '' };
 }
+
+const deathOf = (ctx, c) => die(ctx, c, 'three death save failures');
 
 // ---------- attacks ----------
 
@@ -441,7 +483,8 @@ export const INCAPACITATING = ['Incapacitated', 'Paralyzed', 'Petrified', 'Stunn
  *             the end of the bearer's own turn). A timer set during its source's own turn skips that
  *             turn's end, so "until the end of your next turn" lasts through the next turn.
  *   conc      the condition comes from `src`'s concentration spell: it ends when that concentration ends,
- *             and `src` is marked Concentrating.
+ *             and `src` is marked Concentrating. `spell` names the spell (default: the condition's name).
+ *             A creature concentrates on one spell at a time: starting another ends the first.
  *   save      { ab, dc, when }: the bearer repeats a save at the 'end' (or 'start') of each of its turns.
  */
 export function addCondition(ctx, c, name, rounds, opts = {}) {
@@ -458,13 +501,31 @@ export function addCondition(ctx, c, name, rounds, opts = {}) {
     }
     if (opts.conc) {
       cond.conc = true;
-      if (!hasCond(srcC, 'Concentrating')) srcC.conds.push({ n: 'Concentrating', d: null });
+      cond.spell = String(opts.spell || name).trim();
+      msgs.push(...concentrateOn(ctx, srcC, cond.spell));
     }
   }
   if (opts.save?.ab && opts.save.dc > 0) cond.save = { ab: opts.save.ab, dc: +opts.save.dc, when: opts.save.when === 'start' ? 'start' : 'end' };
   const i = c.conds.findIndex(x => x.n === name);
   if (i >= 0) c.conds[i] = cond; else c.conds.push(cond);
   if (INCAPACITATING.includes(name) && hasCond(c, 'Concentrating')) msgs.push(...endConcentration(ctx, c));
+  return msgs;
+}
+
+/**
+ * `c` concentrates on `spell`. Already concentrating on a different spell: that one ends first
+ * (with its effects). Returns messages.
+ */
+export function concentrateOn(ctx, c, spell) {
+  const cur = c.conds.find(x => x.n === 'Concentrating');
+  const msgs = [];
+  if (cur && cur.spell && spell && cur.spell.toLowerCase() !== spell.toLowerCase()) {
+    msgs.push(...endConcentration(ctx, c).map(m => m.replace('loses concentration', `stops concentrating on ${cur.spell}`)));
+  } else if (cur) {
+    if (spell && !cur.spell) cur.spell = spell;
+    return msgs;
+  }
+  c.conds.push({ n: 'Concentrating', d: null, ...(spell ? { spell } : {}) });
   return msgs;
 }
 
@@ -524,7 +585,7 @@ export function resolvePrompt(ctx, id, success) {
 export function setExhaustion(ctx, c, level) {
   const n = Math.max(0, Math.min(6, level));
   set(ctx, c, 'exh', n);
-  return n === 6 ? [`${nameOf(ctx, c)} reaches Exhaustion 6 and dies.`] : [];
+  return n === 6 ? die(ctx, c, 'Exhaustion 6') : [];
 }
 
 // ---------- spell slots ----------
