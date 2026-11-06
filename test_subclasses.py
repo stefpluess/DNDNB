@@ -151,6 +151,20 @@ class OnTheSheet(unittest.TestCase):
         d["inventory"] = [{"uid": "s", "name": "Shield", "type": "shield", "equipped": True, "armor": {"category": "Shield", "base": 2}}]
         self.assertEqual(rules.derive(d)["ac"], 10 + 3)          # no Dazzling Footwork with a shield (and no shield training)
 
+    def test_2014_draconic_resilience_and_divine_strike(self):
+        s = char("sorcerer", 1, "draconic-2014", dex=14)
+        self.assertEqual(rules.derive(s)["ac"], 13 + 2)
+        c = char("cleric", 8, "tempest-2014", str=14)
+        c["inventory"] = [{"uid": "w", "name": "Warhammer", "type": "weapon", "equipped": True,
+                           "weapon": {"index": "warhammer", "category": "Martial", "range": "Melee", "dice": "1d8", "dtype": "bludgeoning", "properties": []}}]
+        d = rules.derive(c)
+        hammer = d["attacks"][0]
+        self.assertEqual((hammer["proficient"], hammer["riders"][0]["dice"], hammer["riders"][0]["type"]), (True, "1d8", "thunder"))
+
+    def test_the_catalog_is_complete(self):
+        from collections import Counter
+        self.assertEqual(Counter(v["source"] for v in CATALOG.values()), {"PHB 2024": 48, "PHB 2014": 40, "Tasha's": 30})
+
     def test_wrong_class_or_level_warns(self):
         self.assertTrue([w for w in rules.derive(char("wizard", 5, "champion-2024"))["warnings"] if "Fighter subclass" in w])
         self.assertTrue([w for w in rules.derive(char("fighter", 2, "champion-2024"))["warnings"] if "starts at" in w])
