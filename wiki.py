@@ -10,6 +10,14 @@ count as links (an NPC's Location shows up in that location's "Linked from", and
 Values are kept per category ({"npc": {...}, "quest": {...}}), so switching a page's category and back loses
 nothing. Pages carry tags (normalized: "Act 2" -> "act-2") and can sit inside another page (parent_id).
 
+Pages can also point at things in the rest of the app: [[char:Mira]], [[monster:Goblin Warrior]] and
+[[fight:Goblin ambush]] (by name), and "char" / "monster" fields in an info box (an NPC's stat block, a
+player character's sheet). These are kept in wiki_refs, so a character sheet or a creature in combat can
+list the pages that mention it. The server resolves the names (resolve_refs) against characters, homebrew
+creatures, SRD monsters and saved fights.
+
+export_zip() writes every page as a Markdown file (front matter with the info box and tags), with the images.
+
 Images are files in data/wiki_images/, named by their content ("<16 hex of SHA-256>.png"), so the same
 picture uploaded twice is stored once. Pages show them with ![Caption|size](file) and can have one as their
 portrait. Only PNG, JPEG, GIF and WebP are accepted, recognized by their bytes (never SVG: it can hold scripts).
@@ -17,12 +25,14 @@ portrait. Only PNG, JPEG, GIF and WebP are accepted, recognized by their bytes (
 All functions take an open campaign connection; the server wraps them in a session.
 """
 import hashlib
+import io
 import json
 import os
 import re
+import zipfile
 
 CATEGORIES = [
-    ("unsorted", "Unsorted"), ("npc", "NPCs"), ("location", "Locations"), ("faction", "Factions"),
+    ("unsorted", "Unsorted"), ("npc", "NPCs"), ("pc", "Player characters"), ("location", "Locations"), ("faction", "Factions"),
     ("quest", "Quests"), ("item", "Items"), ("lore", "Lore"), ("session", "Session log"),
 ]
 CATEGORY_KEYS = {k for k, _ in CATEGORIES}
@@ -30,12 +40,15 @@ TITLE_MAX = 120
 FIELD_MAX = 200
 
 # The info box of each category: (key, label, type[, choices]). Types: text, page (another page's title:
-# a link), choice (one of the choices; "" = not set), date (YYYY-MM-DD). Attitudes are the 2024 DMG's.
+# a link), char / monster (a character sheet or creature, by name: a game link), choice (one of the choices;
+# "" = not set), date (YYYY-MM-DD). Attitudes are the 2024 DMG's.
 ATTITUDES = ["", "Friendly", "Indifferent", "Hostile"]
 FIELDS = {
     "npc": [("species", "Species", "text"), ("role", "Role", "text"), ("location", "Location", "page"),
             ("faction", "Faction", "page"), ("attitude", "Attitude", "choice", ATTITUDES),
-            ("status", "Status", "choice", ["", "Alive", "Dead", "Missing", "Unknown"])],
+            ("status", "Status", "choice", ["", "Alive", "Dead", "Missing", "Unknown"]),
+            ("statblock", "Stat block", "monster")],
+    "pc": [("sheet", "Character sheet", "char"), ("player", "Player", "text"), ("goal", "Goal", "text")],
     "location": [("kind", "Type", "text"), ("ruler", "Ruled by", "page"), ("population", "Population", "text"),
                  ("danger", "Danger", "choice", ["", "Safe", "Risky", "Dangerous", "Deadly"])],
     "faction": [("leader", "Leader", "page"), ("base", "Based in", "page"), ("goal", "Goal", "text"),
@@ -55,6 +68,15 @@ MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 # [[Target]] or [[Target|label]]: the target can't contain brackets or a bar
 LINK = re.compile(r"\[\[([^\[\]|\n]+?)(\|[^\[\]\n]*)?\]\]")
+# a link target naming something in the game rather than a page: char:Mira, monster:Goblin Warrior, fight:Ambush
+REF_KINDS = {"char": "Character", "monster": "Creature", "fight": "Saved fight"}
+REF = re.compile(r"(char|monster|fight)\s*:\s*(\S.*)", re.I)
+
+
+def split_ref(target):
+    """("monster", "Goblin Warrior") for "monster: Goblin Warrior", or None for a page title."""
+    m = REF.fullmatch(" ".join(str(target or "").split()))
+    return (m.group(1).lower(), m.group(2)) if m else None
 
 
 class WikiError(ValueError):
@@ -76,6 +98,8 @@ def clean_title(title):
         raise WikiError("A page needs a title.")
     if any(c in t for c in "[]|"):
         raise WikiError("Titles can't contain [ ] or |, because links use them.")
+    if split_ref(t):
+        raise WikiError("Titles can't start with char:, monster: or fight:, because links to the game use them.")
     return t[:TITLE_MAX]
 
 
@@ -84,9 +108,20 @@ def parse_links(body):
     seen = []
     for m in LINK.finditer(body or ""):
         t = norm(m.group(1))
-        if t and t not in seen:
+        if t and t not in seen and not split_ref(t):
             seen.append(t)
     return seen
+
+
+def parse_refs(body):
+    """The game things a page's text names: [(kind, name as written)], once each."""
+    out, seen = [], set()
+    for m in LINK.finditer(body or ""):
+        ref = split_ref(m.group(1))
+        if ref and (ref[0], norm(ref[1])) not in seen:
+            seen.add((ref[0], norm(ref[1])))
+            out.append(ref)
+    return out
 
 
 def rewrite_links(body, old, new):
@@ -120,8 +155,10 @@ def clean_fields(fields):
         kept = {}
         for key, _label, kind, *rest in FIELDS[cat]:
             v = " ".join(str(values.get(key) or "").split())[:FIELD_MAX]
-            if kind == "page":
-                v = " ".join(re.sub(r"[\[\]|]", " ", v).split())     # a title, even if typed as [[Title]]
+            if kind in ("page", "char", "monster"):
+                v = " ".join(re.sub(r"[\[\]|]", " ", v).split())     # a title or name, even if typed as [[Title]]
+                if kind != "page" and split_ref(v):
+                    v = split_ref(v)[1]                                 # "monster:Goblin" typed into a monster field
             elif kind == "choice" and v not in rest[0]:
                 v = ""
             elif kind == "date" and not DATE.fullmatch(v):
@@ -134,12 +171,15 @@ def clean_fields(fields):
 
 
 def _canonical(conn, fields):
-    """Page fields that name an existing page take its exact title ("stonehill inn" -> "Stonehill Inn")."""
-    titles = {norm(r["title"]): r["title"] for r in conn.execute("SELECT title FROM wiki_pages WHERE deleted IS NULL")}
+    """Fields that name an existing page, character or homebrew creature take its exact name ("stonehill inn" ->
+    "Stonehill Inn"). SRD monster names are matched without case when the page is shown (resolve_refs)."""
+    names = {"page": {norm(r["title"]): r["title"] for r in conn.execute("SELECT title FROM wiki_pages WHERE deleted IS NULL")},
+             "char": {norm(r["name"]): r["name"] for r in conn.execute("SELECT name FROM characters")},
+             "monster": {norm(r["name"]): r["name"] for r in conn.execute("SELECT name FROM homebrew")}}
     for cat, values in fields.items():
         for key, _label, kind, *_ in FIELDS.get(cat, []):
-            if kind == "page" and norm(values.get(key)) in titles:
-                values[key] = titles[norm(values[key])]
+            if kind in names and norm(values.get(key)) in names[kind]:
+                values[key] = names[kind][norm(values[key])]
     return fields
 
 
@@ -147,6 +187,21 @@ def page_fields(category, fields):
     """[(key, title)] of the filled-in page fields of the page's category: they count as links."""
     values = (fields or {}).get(category) or {}
     return [(f[0], values[f[0]]) for f in FIELDS.get(category, []) if f[2] == "page" and values.get(f[0])]
+
+
+def ref_fields(category, fields):
+    """[(kind, name)] of the filled-in char / monster fields of the page's category: they count as game links."""
+    values = (fields or {}).get(category) or {}
+    return [(f[2], values[f[0]]) for f in FIELDS.get(category, []) if f[2] in ("char", "monster") and values.get(f[0])]
+
+
+def page_refs(body, category, fields):
+    out, seen = [], set()
+    for kind, name in parse_refs(body) + ref_fields(category, fields):
+        if (kind, norm(name)) not in seen:
+            seen.add((kind, norm(name)))
+            out.append((kind, name))
+    return out
 
 
 def clean_tags(tags):
@@ -248,7 +303,8 @@ def get_page(conn, pid):
     live = _live(conn)
     children = conn.execute("SELECT id, title, category, portrait FROM wiki_pages WHERE parent_id=? AND deleted IS NULL "
                             "ORDER BY title COLLATE NOCASE", (pid,)).fetchall()
-    out = {**_row(r), "body": r["body"], "deleted": r["deleted"], "fields": fields, "links": links,
+    refs = [{"kind": k, "name": n} for k, n in page_refs(r["body"], r["category"], fields)]
+    out = {**_row(r), "body": r["body"], "deleted": r["deleted"], "fields": fields, "links": links, "refs": refs,
            "backlinks": [{"id": b["id"], "title": b["title"], "category": b["category"]} for b in back],
            "breadcrumbs": _ancestors(live, pid),
            "children": [{"id": c["id"], "title": c["title"], "category": c["category"], "portrait": c["portrait"]} for c in children]}
@@ -278,7 +334,8 @@ def search(conn, q, limit=50):
 
 
 def _snippet(body, words, width=110):
-    text = " ".join(LINK.sub(lambda m: (m.group(2) or "|" + m.group(1))[1:], body or "").split())
+    shown = lambda m: m.group(2)[1:] if m.group(2) else (split_ref(m.group(1)) or (None, m.group(1)))[1]
+    text = " ".join(LINK.sub(shown, body or "").split())
     low = text.casefold()
     at = min((low.find(w) for w in words if w in low), default=-1)
     if at < 0:
@@ -301,6 +358,9 @@ def _set_links(conn, pid, body, category="unsorted", fields=None):
     conn.execute("DELETE FROM wiki_links WHERE src=?", (pid,))
     conn.executemany("INSERT INTO wiki_links(src, target) VALUES (?, ?)",
                      [(pid, t) for t in _link_targets(body, category, fields)])
+    conn.execute("DELETE FROM wiki_refs WHERE src=?", (pid,))
+    conn.executemany("INSERT OR IGNORE INTO wiki_refs(src, kind, name) VALUES (?, ?, ?)",
+                     [(pid, k, norm(n)) for k, n in page_refs(body, category, fields)])
 
 
 def _free_title(conn, title):
@@ -460,3 +520,136 @@ def _known_image(conn, file):
     if not IMAGE_FILE.fullmatch(str(file)) or not conn.execute("SELECT 1 FROM wiki_images WHERE file=?", (file,)).fetchone():
         raise WikiError("Pick an uploaded image for the portrait.")
     return file
+
+
+def _image_users(conn):
+    """{file: {"pages": [{id, title}], "trashed": n}}: which pages show each image (in the text or as portrait)."""
+    files = [r["file"] for r in conn.execute("SELECT file FROM wiki_images")]
+    users = {f: {"pages": [], "trashed": 0} for f in files}
+    for r in conn.execute("SELECT id, title, body, portrait, deleted FROM wiki_pages ORDER BY title COLLATE NOCASE"):
+        for f in files:
+            if f in (r["body"] or "") or r["portrait"] == f:
+                if r["deleted"]:
+                    users[f]["trashed"] += 1
+                else:
+                    users[f]["pages"].append({"id": r["id"], "title": r["title"]})
+    return users
+
+
+def list_images(conn):
+    """Every uploaded image, newest first, with the pages that use it (and how many pages in the trash do)."""
+    users = _image_users(conn)
+    rows = conn.execute("SELECT file, name, bytes, created FROM wiki_images ORDER BY created DESC, name").fetchall()
+    return [{"file": r["file"], "name": r["name"], "bytes": r["bytes"], "created": r["created"], **users[r["file"]]} for r in rows]
+
+
+def delete_image(conn, folder, file):
+    """Delete an image no page uses (not even one in the trash). Anything in use is refused."""
+    if not IMAGE_FILE.fullmatch(file or "") or not conn.execute("SELECT 1 FROM wiki_images WHERE file=?", (file,)).fetchone():
+        raise WikiError("No such image.", 404)
+    use = _image_users(conn)[file]
+    if use["pages"] or use["trashed"]:
+        raise WikiError("That image is still used by a page" + (" in the trash" if not use["pages"] else "") + ".", 409)
+    conn.execute("DELETE FROM wiki_images WHERE file=?", (file,))
+    path = os.path.join(folder, file)
+    if os.path.isfile(path):
+        os.remove(path)
+    return {"ok": True}
+
+
+# ---------- links to the rest of the app ----------
+
+def resolve_refs(conn, srd, refs):
+    """What each game link names: [{kind, name, found, id (character / fight), idx (creature), title, meta}].
+    Characters, homebrew creatures (before SRD monsters of the same name) and saved fights match by name,
+    ignoring case. srd: a connection to srd.db, or None."""
+    chars = {norm(r["name"]): r for r in conn.execute("SELECT id, name FROM characters")}
+    fights = {norm(r["name"]): r for r in conn.execute("SELECT id, name, data FROM saved_encounters")}
+    homebrew = {norm(r["name"]): r for r in conn.execute("SELECT idx, name, meta FROM homebrew")}
+    out = []
+    for ref in refs:
+        kind, name = ref["kind"], ref["name"]
+        hit = {"kind": kind, "name": name, "found": False}
+        if kind == "char" and norm(name) in chars:
+            c = chars[norm(name)]
+            hit.update(found=True, id=c["id"], title=c["name"])
+        elif kind == "fight" and norm(name) in fights:
+            f = fights[norm(name)]
+            n = len(_json(f["data"], {}).get("creatures") or [])
+            hit.update(found=True, id=f["id"], title=f["name"], meta=f"{n} creature{'s' if n != 1 else ''}")
+        elif kind == "monster":
+            m = homebrew.get(norm(name))
+            if not m and srd is not None:
+                m = srd.execute("SELECT idx, name, meta FROM entries WHERE kind='monster' AND name = ? COLLATE NOCASE",
+                                (" ".join(name.split()),)).fetchone()
+            if m:
+                hit.update(found=True, idx=m["idx"], title=m["name"], meta=m["meta"] or "")
+        out.append(hit)
+    return out
+
+
+def mentions(conn, kind, name):
+    """The pages (outside the trash) that link to a character, creature or saved fight by this name."""
+    if kind not in REF_KINDS:
+        raise WikiError("Unknown kind of link.")
+    rows = conn.execute("SELECT DISTINCT p.id, p.title, p.category FROM wiki_refs r JOIN wiki_pages p ON p.id = r.src "
+                        "WHERE r.kind = ? AND r.name = ? AND p.deleted IS NULL ORDER BY p.title COLLATE NOCASE",
+                        (kind, norm(name))).fetchall()
+    return [{"id": r["id"], "title": r["title"], "category": r["category"]} for r in rows]
+
+
+# ---------- export ----------
+
+WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+
+
+def safe_filename(title):
+    """A file name that works on Windows, macOS and Linux: 'Who? Me/You' -> 'Who- Me-You'."""
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "-", str(title)).strip(" .")[:100] or "page"
+    return name + "_" if name.casefold() in WINDOWS_RESERVED else name
+
+
+def export_zip(conn, folder):
+    """The whole wiki (outside the trash) as a zip of Markdown files: one folder per category, front matter
+    with the info box, tags and where the page sits, [[links]] kept as they are (Obsidian reads them), and the
+    images in images/ with the pages pointing at them. Returns the zip's bytes."""
+    rows = conn.execute("SELECT * FROM wiki_pages WHERE deleted IS NULL ORDER BY title COLLATE NOCASE").fetchall()
+    titles = {r["id"]: r["title"] for r in rows}
+    names, used, index = set(), set(), {}
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for r in rows:
+            cat = dict(CATEGORIES).get(r["category"], "Unsorted")
+            base = f"{safe_filename(cat)}/{safe_filename(r['title'])}"
+            path, n = f"{base}.md", 1
+            while path.casefold() in names:
+                n += 1
+                path = f"{base} {n}.md"
+            names.add(path.casefold())
+            fields = (_json(r["fields"], {}).get(r["category"]) or {})
+            labels = {f[0]: f[1] for f in FIELDS.get(r["category"], [])}
+            meta = [("title", r["title"]), ("category", cat)]
+            if r["parent_id"] in titles:
+                meta.append(("inside", f"[[{titles[r['parent_id']]}]]"))
+            meta += [(labels.get(k, k), v) for k, v in fields.items()]
+            if r["portrait"]:
+                meta.append(("portrait", f"../images/{r['portrait']}"))
+                used.add(r["portrait"])
+            meta += [("created", r["created"]), ("updated", r["updated"])]
+            lines = ["---"] + [f"{json.dumps(k, ensure_ascii=False)}: {json.dumps(v, ensure_ascii=False)}" for k, v in meta]
+            tags = _json(r["tags"], [])
+            if tags:
+                lines.append("tags: " + json.dumps(tags))
+            def to_images(m):                   # ![Caption](file) -> ![Caption](../images/file), and keep the file
+                used.add(m.group(2))
+                return f"{m.group(1)}../images/{m.group(2)})"
+            body = re.sub(r"(!\[[^\]\n]*\]\()(" + IMAGE_FILE.pattern + r")\)", to_images, r["body"] or "")
+            z.writestr(path, "\n".join(lines + ["---", "", f"# {r['title']}", "", body.rstrip(), ""]))
+            index.setdefault(cat, []).append(r["title"])
+        for f in sorted(used):
+            src = os.path.join(folder, f)
+            if os.path.isfile(src):
+                z.write(src, f"images/{f}")
+        listing = [f"## {cat}\n\n" + "\n".join(f"- [[{t}]]" for t in index[cat]) for _k, cat in CATEGORIES if cat in index]
+        z.writestr("index.md", "# Campaign wiki\n\n" + ("\n\n".join(listing) or "No pages yet.") + "\n")
+    return buf.getvalue()

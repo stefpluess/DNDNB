@@ -4,10 +4,12 @@ The campaign wiki: titles, [[links]], "Linked from", renaming, search and the tr
 Uses a temporary database, never your real data/ folder.
 """
 import io
+import json
 import os
 import sqlite3
 import tempfile
 import unittest
+import zipfile
 
 import db
 import server
@@ -43,6 +45,7 @@ class TempWiki(unittest.TestCase):
         self.saved = (db.DATA_DIR, db.SRD_DB, db.CAMPAIGN_DB)
         db.DATA_DIR = self.tmp.name
         db.CAMPAIGN_DB = os.path.join(self.tmp.name, "campaign.db")
+        db.SRD_DB = os.path.join(self.tmp.name, "srd.db")
         self.conn = db.campaign()
 
     def tearDown(self):
@@ -253,6 +256,129 @@ class Images(TempWiki):
         with self.assertRaises(server.ApiError) as cm:
             server.upload_image(Upload(), {})
         self.assertEqual(cm.exception.status, 413)
+
+
+class GameLinks(TempWiki):
+    """Links from pages to characters, creatures and saved fights, and back."""
+
+    def setUp(self):
+        super().setUp()
+        self.conn.execute("INSERT INTO characters(name, data) VALUES ('Mira', '{}')")
+        self.conn.execute("INSERT INTO saved_encounters(name, data) VALUES ('Goblin ambush', ?)", (json.dumps({"creatures": [{}, {}]}),))
+        self.conn.execute("INSERT INTO homebrew(idx, name, meta, data) VALUES ('hb-grik-1', 'Grik', 'Homebrew', '{}')")
+        srd = db.srd()
+        srd.execute("INSERT INTO entries(kind, idx, name, meta, data) VALUES ('monster', 'goblin-warrior', 'Goblin Warrior', 'CR 1/4', '{}')")
+        srd.commit()
+        self.conn.commit()                  # the API below uses its own connection
+        self.srd = srd
+
+    def tearDown(self):
+        self.srd.close()
+        super().tearDown()
+
+    def test_game_links_are_not_page_links(self):
+        body = "[[char:Mira]] met [[monster: goblin warrior|the goblins]] before the [[Fight:Goblin Ambush]] at [[Phandalin]]."
+        self.assertEqual(wiki.parse_links(body), ["phandalin"])
+        self.assertEqual(wiki.parse_refs(body), [("char", "Mira"), ("monster", "goblin warrior"), ("fight", "Goblin Ambush")])
+        with self.assertRaises(wiki.WikiError):
+            wiki.clean_title("monster: Owlbear")
+        self.assertEqual(wiki.clean_title("Charlotte: a story"), "Charlotte: a story")     # only exact prefixes
+
+    def test_names_resolve_against_the_app(self):
+        page = wiki.create_page(self.conn, "Session 1", "session",
+                                "[[char:mira]], [[monster:Goblin Warrior]], [[monster:grik]], [[fight:goblin ambush]], [[char:Nobody]]")
+        refs = {(r["kind"], r["name"]): r for r in wiki.resolve_refs(self.conn, self.srd, page["refs"])}
+        self.assertEqual((refs[("char", "mira")]["id"], refs[("char", "mira")]["title"]), (1, "Mira"))
+        self.assertEqual(refs[("monster", "Goblin Warrior")]["idx"], "goblin-warrior")
+        self.assertEqual(refs[("monster", "grik")]["idx"], "hb-grik-1")                       # homebrew too
+        self.assertEqual(refs[("fight", "goblin ambush")]["meta"], "2 creatures")
+        self.assertFalse(refs[("char", "Nobody")]["found"])
+
+    def test_info_box_game_fields_and_mentions(self):
+        npc = wiki.create_page(self.conn, "Grik the Bold", "npc", "", fields={"npc": {"statblock": "[[monster:grik]]"}})
+        self.assertEqual(npc["fields"]["npc"]["statblock"], "Grik")
+        self.assertEqual(npc["refs"], [{"kind": "monster", "name": "Grik"}])
+        pc = wiki.create_page(self.conn, "Mira's story", "pc", "Mentions [[char:Mira]] too.", fields={"pc": {"sheet": "MIRA"}})
+        self.assertEqual(pc["fields"]["pc"]["sheet"], "Mira")                                    # its exact name
+        self.assertEqual(len(pc["refs"]), 1)                                                      # once, not twice
+        self.assertEqual([m["title"] for m in wiki.mentions(self.conn, "monster", "GRIK")], ["Grik the Bold"])
+        self.assertEqual([m["title"] for m in wiki.mentions(self.conn, "char", "mira")], ["Mira's story"])
+        wiki.trash_page(self.conn, pc["id"])
+        self.assertEqual(wiki.mentions(self.conn, "char", "Mira"), [])
+        with self.assertRaises(wiki.WikiError):
+            wiki.mentions(self.conn, "spell", "Fireball")
+
+    def test_through_the_api(self):
+        class Body:
+            def __init__(self, b):
+                self.b = b
+
+            def json_body(self):
+                return self.b
+        made = server.create_wiki(Body({"title": "Ambush", "body": "[[fight:Goblin ambush]] with [[char:Mira]]"}), {})
+        self.assertEqual([(r["kind"], r["found"]) for r in made["refs"]], [("fight", True), ("char", True)])
+        self.assertEqual([m["title"] for m in server.wiki_mentions(None, {"kind": ["char"], "name": ["Mira"]})], ["Ambush"])
+
+
+class GalleryAndExport(TempWiki):
+    def folder(self):
+        return db.wiki_images_dir()
+
+    def test_gallery_lists_users_and_only_unused_images_can_be_deleted(self):
+        a = wiki.save_image(self.conn, PNG, "map.png", self.folder())["file"]
+        b = wiki.save_image(self.conn, JPG, "face.jpg", self.folder())["file"]
+        c = wiki.save_image(self.conn, b"GIF89a" + b"spare", "spare.gif", self.folder())["file"]
+        town = self.page("Phandalin", f"![Map]({a})", "location")
+        npc = self.page("Toblen")
+        wiki.update_page(self.conn, npc["id"], portrait=b)
+        wiki.trash_page(self.conn, npc["id"])
+        use = {i["file"]: (i["pages"], i["trashed"]) for i in wiki.list_images(self.conn)}
+        self.assertEqual(use[a], ([{"id": town["id"], "title": "Phandalin"}], 0))
+        self.assertEqual(use[b], ([], 1))                                   # only a page in the trash uses it
+        self.assertEqual(use[c], ([], 0))
+        for busy in (a, b):
+            with self.assertRaises(wiki.WikiError) as cm:
+                wiki.delete_image(self.conn, self.folder(), busy)
+            self.assertEqual(cm.exception.status, 409)
+        wiki.delete_image(self.conn, self.folder(), c)
+        self.assertEqual(sorted(os.listdir(self.folder())), sorted([a, b]))
+        with self.assertRaises(wiki.WikiError):
+            wiki.delete_image(self.conn, self.folder(), "../campaign.db")
+
+    def test_export_writes_markdown_with_front_matter_and_images(self):
+        a = wiki.save_image(self.conn, PNG, "map.png", self.folder())["file"]
+        coast = self.page("Sword Coast", "", "location")
+        wiki.create_page(self.conn, "Phandalin", "location", f"A town.\n\n![Map|medium]({a})\n\nSee [[Toblen]].",
+                         parent_id=coast["id"], fields={"location": {"danger": "Risky"}}, tags="act 1")
+        wiki.create_page(self.conn, 'What? A "quote"/slash', "lore")
+        gone = self.page("Old notes")
+        wiki.trash_page(self.conn, gone["id"])
+        z = zipfile.ZipFile(io.BytesIO(wiki.export_zip(self.conn, self.folder())))
+        names = sorted(z.namelist())
+        self.assertEqual(names, ["Locations/Phandalin.md", "Locations/Sword Coast.md", "Lore/What- A -quote--slash.md",
+                                 f"images/{a}", "index.md"])
+        text = z.read("Locations/Phandalin.md").decode()
+        self.assertIn('"inside": "[[Sword Coast]]"', text)
+        self.assertIn('"Danger": "Risky"', text)
+        self.assertIn('tags: ["act-1"]', text)
+        self.assertIn(f"![Map|medium](../images/{a})", text)
+        self.assertIn("See [[Toblen]].", text)
+        self.assertEqual(z.read(f"images/{a}"), PNG)
+        self.assertIn("- [[Phandalin]]", z.read("index.md").decode())
+        self.assertNotIn("Old notes", " ".join(names))
+
+    def test_safe_file_names(self):
+        self.assertEqual(wiki.safe_filename("CON"), "CON_")
+        self.assertEqual(wiki.safe_filename("  ...  "), "page")
+        self.assertEqual(wiki.safe_filename("a\\b:c"), "a-b-c")
+
+    def test_export_through_the_api(self):
+        self.page("Mirt")
+        self.conn.commit()                  # the API uses its own connection
+        raw = server.export_wiki(None, {})
+        self.assertEqual(raw.mime, "application/zip")
+        self.assertRegex(raw.filename, r"^campaign-wiki-\d{4}-\d{2}-\d{2}\.zip$")
+        self.assertIn("NPCs/Mirt.md", zipfile.ZipFile(io.BytesIO(raw.data)).namelist())
 
 
 class OlderDatabase(unittest.TestCase):

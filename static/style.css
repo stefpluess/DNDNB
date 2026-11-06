@@ -58,6 +58,7 @@ kbd{font-family:var(--mono);font-size:.75rem;border:1px solid var(--line);border
 .btn.roll{font-family:var(--mono);font-size:.85rem;padding:3px 9px;font-weight:600}
 .link{background:none;border:0;color:var(--accent);padding:0;font-size:.88rem;font-family:var(--body);letter-spacing:0}
 .link:disabled{opacity:.35;cursor:default}
+.link.bad{color:var(--bad)}
 .field{border:1px solid var(--line);background:var(--bg);border-radius:var(--radius);padding:6px 8px;min-width:0}
 .field:focus{border-color:var(--accent)}
 .field.tiny{width:3.4rem;padding:3px 6px}
@@ -363,6 +364,7 @@ pre.tbl{font-family:var(--mono);font-size:.75rem;overflow-x:auto;background:var(
 
 /* ---------- computed stats (Party view and inspector) ---------- */
 .derived{padding:16px 18px;gap:16px;overflow-y:auto}
+.derived>*{flex-shrink:0}                 /* a long column scrolls; nothing in it gets squashed */
 .acbig{display:flex;gap:16px;align-items:center}
 .shield{display:flex;flex-direction:column;align-items:center;justify-content:center;width:4.4rem;height:4.9rem;border:2px solid var(--accent);border-radius:8px 8px 26px 26px;font-family:var(--mono)}
 .shield b{font-size:1.9rem;line-height:1}
@@ -400,8 +402,10 @@ pre.tbl{font-family:var(--mono);font-size:.75rem;overflow-x:auto;background:var(
 .wikicats .todo small{color:var(--warn);font-weight:600}
 .wikinav #wikiList{border-top:1px solid var(--line);padding-top:6px}
 .wikinav #wikiList span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wikitrash{align-self:flex-start;color:var(--muted)}
-.wikitrash.on{color:var(--ink);font-weight:700}
+.wikifoot{display:flex;gap:16px;align-items:baseline;flex:none}
+.wikifoot .link{color:var(--muted)}
+.wikifoot .link:hover{color:var(--ink)}
+.wikifoot .link.on{color:var(--ink);font-weight:700}
 .wikipage{gap:14px}
 .wikihead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:1px solid var(--line);padding-bottom:10px}
 .wikihead .titles{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -504,6 +508,32 @@ button.chip.wtag.on b{color:var(--accent-ink)}
 .wikinav #wikiList li{position:relative;padding-left:calc(14px + var(--depth,0) * 14px)}
 .wikinav #wikiList .fold{position:absolute;left:calc(var(--depth,0) * 14px);top:50%;transform:translateY(-50%);width:14px;height:24px;padding:0;border:0;background:none;color:var(--muted);font-size:.8rem;line-height:1}
 .wikinav #wikiList .fold:hover{color:var(--ink)}
+
+/* links to the game ([[char:...]], [[monster:...]], [[fight:...]]): a small mark tells them apart from pages */
+a.wl.ref::before{font-size:.8em;margin-right:.15em;opacity:.75}
+a.wl.ref.r-char::before{content:"♟"}
+a.wl.ref.r-monster::before{content:"⚔"}
+a.wl.ref.r-fight::before{content:"⚑"}
+.refcards{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.refcard{display:flex;flex-direction:column;gap:4px;border:1px solid var(--line);border-radius:var(--radius);padding:6px 10px;background:var(--surface)}
+.refcard>div:first-child{display:flex;flex-direction:column;align-items:flex-start}
+.refdlg{width:min(560px,92vw);max-height:86vh;display:none;flex-direction:column;gap:12px}
+.refdlg[open]{display:flex}
+.refdlg .refbody{overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:10px}
+/* the image gallery (the Images view and the picker) */
+.gallery{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(11rem,1fr));gap:12px}
+.gallery li{display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:var(--radius-lg);padding:6px;background:var(--surface)}
+.gthumb{display:block;padding:0;border:0;background:var(--surface-2);border-radius:var(--radius);overflow:hidden;cursor:zoom-in;aspect-ratio:4/3}
+.gthumb img{width:100%;height:100%;object-fit:cover;display:block}
+.gthumb[data-pickimg]{cursor:pointer}
+.gthumb[data-pickimg]:hover{outline:2px solid var(--accent)}
+.gmeta{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:.85rem}
+.gmeta b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gmeta .unused{color:var(--warn)}
+.gmeta .link{align-self:flex-start}
+.gallerydlg{width:min(900px,94vw);max-height:86vh;overflow-y:auto}
+.gallerydlg h2{font-family:var(--display)}
+.gallerydlg .gallery{margin-top:12px}
 
 /* the full-screen viewer */
 .lightbox{width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0;background:var(--viewer);color:var(--viewer-ink);display:none;flex-direction:column}

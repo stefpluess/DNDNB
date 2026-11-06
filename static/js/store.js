@@ -26,7 +26,7 @@ export const S = {
   monList: [],
   curMon: null,               // { idx, data }
   // two-step confirmations ("click again to …")
-  confirm: { del: null, clear: false, delChar: null, delMon: null, delFight: null, delPage: null },
+  confirm: { del: null, clear: false, delChar: null, delMon: null, delFight: null, delPage: null, delImg: null },
   saved: [],                  // saved encounters, as last loaded
   // wiki view
   wiki: {
@@ -37,6 +37,9 @@ export const S = {
     editing: false, trashOpen: false, back: [],   // edit mode, the trash list, pages to go back to
     tags: [],                 // tags in use: [{ tag, n }]; W.cat 'tag:<tag>' lists a tag's pages
     collapsed: new Set(),     // page ids whose pages inside are folded away in the list
+    fights: [],               // saved fights, for [[fight:...]] suggestions
+    galleryOpen: false, galleryFilter: 'all', gallery: [],   // the Images view: shown, 'all' or 'unused', the images
+    pendingOpen: null,        // a page to open when the view shows (from "In the wiki" in another view)
   },
 };
 

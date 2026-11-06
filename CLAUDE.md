@@ -30,8 +30,9 @@ In the browser console, `ledger.S` shows the app state and `ledger.combat` the c
   links, search, a trash (nothing is erased). One campaign. Images: uploaded (button, paste, drag and drop),
   written as `![Caption|small|medium](file)`, a full-screen viewer with zoom, one portrait per page.
   Info boxes per category (`wiki.FIELDS`; "page" fields are links), tags, pages inside pages (`parent_id`,
-  breadcrumbs, a foldable tree). Planned next: links to characters/monsters/fights with Add to combat, an image
-  gallery (with images no page uses), Markdown export.
+  breadcrumbs, a foldable tree). Game links `[[char:Name]]` / `[[monster:Name]]` / `[[fight:Name]]` and char /
+  monster info box fields ("In the game" with Add to combat; sheets and the combat inspector show "In the wiki").
+  An image gallery (delete only unused images) and a Markdown zip export.
 
 ## Layout
 Python (the server owns storage and all rules math for sheets and homebrew):
@@ -43,7 +44,9 @@ Python (the server owns storage and all rules math for sheets and homebrew):
 - `wiki.py`: wiki pages (`wiki_pages`), their links as normalized titles (`wiki_links`, so links to pages
   that don't exist yet are kept), rename rewriting, search, soft delete (`deleted` column); info box values
   per category in `fields` JSON (`{"npc": {...}}`, so switching category loses nothing; page fields are links,
-  stored with the linked page's exact title), `tags` JSON (normalized `act-2`), `parent_id` (no loops); images in
+  stored with the linked page's exact title), `tags` JSON (normalized `act-2`), `parent_id` (no loops); game links
+  in `wiki_refs` (kind + normalized name, matched by name in `resolve_refs`; titles can't start with `char:`
+  etc.); `export_zip()`; images in
   `data/wiki_images/` named `<16 hex of SHA-256>.<ext>` (same picture = same file), recognized by their bytes
   (PNG/JPEG/GIF/WebP only, never SVG), listed in `wiki_images`; served by `GET /api/wiki/images/<file>`.
   Pages only ever show uploaded files, never web addresses.

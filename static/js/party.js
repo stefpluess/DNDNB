@@ -5,6 +5,7 @@ import { bindForm } from './forms.js';
 import { classLine, derivedHtml } from './sheetview.js';
 import { S, api, charOp, onCharSaved, onResourceEvent, saveEnc, scheduleCharSave } from './store.js';
 import { addChar } from './tracker.js';
+import { showMentions } from './wiki.js';
 import { handleRollClick } from './ui.js';
 import { $, esc, label, ordinal, signed, toast, uid } from './util.js';
 
@@ -23,7 +24,8 @@ function renderCharList() {
 
 function renderDerived() {
   const ch = current();
-  $('#derived').innerHTML = ch ? derivedHtml(ch) : '';
+  $('#derived').innerHTML = ch ? `${derivedHtml(ch)}<div id="partyWiki"></div>` : '';
+  if (ch) showMentions($('#partyWiki'), 'char', ch.sheet.name);       // the wiki pages about this character
 }
 
 function updateScoreMods() {

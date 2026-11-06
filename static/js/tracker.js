@@ -10,6 +10,7 @@ import { itemHtml, mdLite, monAC, monInit, monsterLine, spellHtml, statBlock } f
 import { S, api, charOp, ctx, getEntry, onCharSaved, onResourceEvent, saveEnc, scheduleCharSave } from './store.js';
 import { clearLog, handleRollClick, pushLog, renderLog } from './ui.js';
 import { $, esc, mod as abilityMod, ordinal, signed, toast, uid } from './util.js';
+import { showMentions } from './wiki.js';
 
 const KIND = { pc: 'PC', foe: 'Foe', ally: 'Ally' };
 const blankSlots = () => Array.from({ length: 9 }, () => ({ max: 0, used: 0 }));
@@ -468,6 +469,7 @@ export async function renderInspector() {
     if (!c) { S.sel = null; return renderInspector(); }
     box.innerHTML = combatantPanel(c);
     if (c.sb) $('#sbHost').innerHTML = statBlock(c.sb);      // a summoned creature carries its own stat block
+    if (ctx.linked(c)) showMentions($('#wikiHost'), 'char', ctx.linked(c).sheet.name);
     if (c.ref) {
       const [kind, idx] = c.ref.split(':');
       try {
@@ -476,14 +478,15 @@ export async function renderInspector() {
           saveEnc(); renderTracker();
           if (S.sel?.id === c.id) return renderInspector();
         }
-        if (S.sel?.id === c.id) $('#sbHost').innerHTML = statBlock(m);
+        if (S.sel?.id === c.id) { $('#sbHost').innerHTML = statBlock(m); showMentions($('#wikiHost'), 'monster', m.name); }
       } catch (e) { const host = $('#sbHost'); if (host) host.innerHTML = `<p class="hint">Stat block unavailable: ${esc(e.message)}</p>`; }
     }
     return;
   }
   if (sel.type === 'char') {
     const ch = S.chars.get(sel.id);
-    box.innerHTML = ch ? `<div class="ins-head"><h2>${esc(ch.sheet.name)}</h2><p>${esc(classLine(ch.sheet))}</p></div>${derivedHtml(ch, { compact: true })}` : '';
+    box.innerHTML = ch ? `<div class="ins-head"><h2>${esc(ch.sheet.name)}</h2><p>${esc(classLine(ch.sheet))}</p></div><div id="wikiHost"></div>${derivedHtml(ch, { compact: true })}` : '';
+    if (ch) showMentions($('#wikiHost'), 'char', ch.sheet.name);
     return;
   }
   box.innerHTML = '<p class="hint">Loading…</p>';
@@ -492,7 +495,8 @@ export async function renderInspector() {
     if (S.sel !== sel) return;                    // the selection changed while loading
     if (sel.kind === 'monster') {
       box.innerHTML = `<div class="ins-head"><h2>${esc(d.name)}</h2><p>${esc(monsterLine(d))}</p></div>
-        <div class="line"><button class="btn primary" data-addmon="${esc(sel.idx)}">Add to combat</button><span class="hint">Uses the count and HP setting in the library.</span></div>${statBlock(d)}`;
+        <div class="line"><button class="btn primary" data-addmon="${esc(sel.idx)}">Add to combat</button><span class="hint">Uses the count and HP setting in the library.</span></div><div id="wikiHost"></div>${statBlock(d)}`;
+      showMentions($('#wikiHost'), 'monster', d.name);
     } else if (sel.kind === 'spell') box.innerHTML = spellHtml(d);
     else if (sel.kind === 'condition') box.innerHTML = `<div class="ins-head"><h2>${esc(d.name)}</h2></div><div class="prose">${mdLite(d.desc)}</div>`;
     else box.innerHTML = itemHtml(sel.kind, sel.idx, d, [...S.chars.values()]);
@@ -887,6 +891,7 @@ function combatantPanel(c) {
     ${auraHtml(c)}
     ${summonHtml(c)}
     ${ch ? derivedHtml(ch, { compact: true }) : ''}
+    <div id="wikiHost"></div>
     <div id="sbHost"></div>
     <div class="blk"><h4>Notes</h4><textarea class="field" id="insNotes" data-path="notes" placeholder="Tactics, reminders, loot…">${esc(c.notes)}</textarea></div>
     <div class="acts">${ch ? '<button class="btn sm" data-a="opensheet">Open sheet</button>' : '<button class="btn sm" data-a="dup">Duplicate</button>'}
@@ -1165,6 +1170,14 @@ async function saveFight() {
     toast(`${existing ? 'Updated' : 'Saved'} "${name}" (${creatures.length} creature${creatures.length > 1 ? 's' : ''}).`);
   } catch (e) { toast(e.message); }
   doSearch();
+}
+
+/** Add a saved fight's creatures from elsewhere (the wiki), loading the saved fights first if needed. */
+export async function addFight(id) {
+  if (!(S.saved || []).some(f => f.id === id)) {
+    try { S.saved = await api('/api/saved-encounters'); } catch (e) { return toast(e.message); }
+  }
+  return loadFight(id);
 }
 
 async function loadFight(id) {

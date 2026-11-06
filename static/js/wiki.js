@@ -4,10 +4,18 @@
 // Images are uploaded (button, paste or drag and drop), written into the text as ![Caption|size](file),
 // open full-screen when clicked, and one can be the page's portrait. Each category has an info box (fields
 // from wiki.FIELDS; "page" fields are links), pages carry tags and can sit inside another page.
+// [[char:Mira]], [[monster:Goblin Warrior]] and [[fight:Ambush]] (and char / monster fields) link to the rest of
+// the app: the page lists them under "In the game" with Add to combat, and sheets and creatures list their pages.
+// The gallery shows every uploaded image and where it's used; the whole wiki exports as Markdown.
 
 import { bindForm } from './forms.js';
-import { completeLink, imageMarkdown, imageUrl, insertBlock, normTitle, openLink, renderMarkdown, setImageSize } from './markdown.js';
-import { S, api, onWikiError, onWikiSaved, saveWikiNow, scheduleWikiSave, uploadImage } from './store.js';
+import { REF_KINDS, completeLink, imageMarkdown, imageUrl, insertBlock, normTitle, openLink, renderMarkdown, setImageSize, splitRef } from './markdown.js';
+import { switchView } from './nav.js';
+import { classLine } from './sheetview.js';
+import { monsterLine, statBlock } from './statblock.js';
+import { S, api, getEntry, onWikiError, onWikiSaved, saveWikiNow, scheduleWikiSave, uploadImage } from './store.js';
+import { addChar, addFight, addMonster } from './tracker.js';
+import { handleRollClick } from './ui.js';
 import { $, esc, toast } from './util.js';
 
 const W = S.wiki;
@@ -16,6 +24,11 @@ const catFields = key => W.categories.find(c => c.key === key)?.fields || [];
 const pageById = id => W.pages.find(p => p.id === id);
 const byTitle = new Map();                   // normalized title -> page, for resolving [[links]]
 const resolve = title => byTitle.get(normTitle(title)) || null;
+/** A game link on the open page, as the server resolved it ({ kind, name, found, id | idx, title, meta }), or null. */
+const refKey = (kind, name) => `${kind}:${normTitle(name)}`;
+const findRef = (kind, name) => (W.cur?.refs || []).find(r => refKey(r.kind, r.name) === refKey(kind, name)) || null;
+const resolveRef = (kind, name) => { const r = findRef(kind, name); return r?.found ? r : null; };
+const md = (text, opts = {}) => renderMarkdown(text, resolve, { resolveRef, ...opts });
 
 /** "just now", "12 min ago", "3 h ago", "yesterday", or the date. Timestamps are stored in UTC. */
 function when(ts) {
@@ -46,7 +59,7 @@ async function openPage(id, { edit = false, back = true } = {}) {
   let page;
   try { page = await api(`/api/wiki/${id}`); } catch (e) { toast(e.message); await loadList(); return renderWiki(); }
   if (back && W.cur && W.cur.id !== page.id) W.back = [...W.back.filter(x => x !== W.cur.id), W.cur.id].slice(-30);
-  Object.assign(W, { cur: withDrafts(page), editing: edit, trashOpen: false });
+  Object.assign(W, { cur: withDrafts(page), editing: edit, trashOpen: false, galleryOpen: false });
   S.confirm.delPage = null;
   renderWiki();
   $('#wikiPage').scrollTop = 0;
@@ -88,6 +101,7 @@ function renderNav() {
     `<button class="chip wtag${W.cat === `tag:${t.tag}` && !W.results ? ' on' : ''}" data-tag="${esc(t.tag)}">#${esc(t.tag)} <b>${t.n}</b></button>`).join('')}</div>` : '';
   $('#wikiTrash').textContent = W.trash ? `Trash (${W.trash})` : 'Trash';
   $('#wikiTrash').classList.toggle('on', W.trashOpen);
+  $('#wikiImages').classList.toggle('on', W.galleryOpen);
 
   let list;
   if (W.results) list = W.results;
@@ -125,7 +139,7 @@ function renderNav() {
 // ---------- middle column: the page, its editor, or the trash ----------
 
 function pageHtml(p) {
-  const html = renderMarkdown(p.body, resolve);
+  const html = md(p.body);
   return `<header class="wikihead">
       <div class="titles"><div class="crumbs">${W.back.length ? '<button class="link" data-w="back" title="Back to the previous page (Alt+←)">← Back</button>' : ''}
           ${p.breadcrumbs.length ? `<nav class="trail" aria-label="Inside">${p.breadcrumbs.map(b => `<a class="wl" href="#" data-page="${b.id}">${esc(b.title)}</a>`).join('<span aria-hidden="true">›</span>')}</nav>` : ''}</div>
@@ -152,10 +166,13 @@ function editorHtml(p) {
         ${infoEditHtml(p)}
       </div>
       <div class="line"><span class="hint" id="wikiSaved"></span>
-        <button class="btn" data-w="addimage" title="Add images (or paste them, or drag them onto the text)">Add image</button>
+        <button class="btn" data-w="addimage" title="Upload images (or paste them, or drag them onto the text)">Add image</button>
+        <button class="btn" data-w="fromgallery" title="Use an image you uploaded before">From gallery</button>
         <button class="btn primary" data-w="done" title="Done (Esc)">Done</button></div>
     </header>
     <datalist id="wikiTitles">${W.pages.filter(x => x.id !== p.id).map(x => `<option value="${esc(x.title)}">`).join('')}</datalist>
+    <datalist id="wikiChars">${[...S.chars.values()].map(c => `<option value="${esc(c.sheet.name)}">`).join('')}</datalist>
+    <datalist id="wikiMonsters"></datalist>
     <div class="wikiedit">
       <div class="pane"><textarea class="field" id="wikiBody" data-path="body" spellcheck="true"
         placeholder="Write anything. Link pages with [[Page title]]: a page that doesn't exist yet can be created from its link.">${esc(p.body)}</textarea>
@@ -164,7 +181,8 @@ function editorHtml(p) {
     </div>
     <p class="hint mdhelp"><code>[[Page]]</code> or <code>[[Page|text]]</code> link · <code># Heading</code> · <code>**bold**</code> · <code>*italic*</code>
       · <code>- list</code> · <code>- [ ] task</code> · <code>&gt; quote</code> · <code>| table |</code> · <code>---</code> line
-      · images: paste or drop them, <code>![Caption|small](…)</code> (small, medium or full)</p>`;
+      · images: paste or drop them, <code>![Caption|small](…)</code> (small, medium or full)
+      · the game: <code>[[char:Mira]]</code> <code>[[monster:Goblin Warrior]]</code> <code>[[fight:Ambush]]</code></p>`;
 }
 
 /** The info box fields of the page's category, to fill in. Page fields suggest titles and save when you leave them. */
@@ -178,7 +196,9 @@ function infoEditHtml(p) {
     const input = f.type === 'choice'
       ? `<select class="field" data-path="${path(f.key)}">${f.choices.map(c => `<option value="${esc(c)}"${c === val ? ' selected' : ''}>${esc(c || '—')}</option>`).join('')}</select>`
       : f.type === 'date' ? `<input class="field" type="date" data-path="${path(f.key)}" value="${esc(val)}">`
-        : `<input class="field" data-path="${path(f.key)}" value="${esc(val)}" autocomplete="off"${f.type === 'page' ? ' data-commit list="wikiTitles" placeholder="a page"' : ''}>`;
+        : `<input class="field" data-path="${path(f.key)}" value="${esc(val)}" autocomplete="off"${{
+          page: ' data-commit list="wikiTitles" placeholder="a page"', char: ' data-commit list="wikiChars" placeholder="a character in Party"',
+          monster: ' data-commit list="wikiMonsters" data-monsters placeholder="SRD or homebrew creature"' }[f.type] || ''}>`;
     return `<label class="lbl-f">${esc(f.label)}${input}</label>`;
   }).join('')}</div>`;
 }
@@ -194,6 +214,7 @@ async function trashHtml() {
 async function renderMain() {
   const box = $('#wikiPage');
   if (W.trashOpen) { box.innerHTML = await trashHtml(); return; }
+  if (W.galleryOpen) { box.innerHTML = await galleryHtml(); return; }
   const p = W.cur;
   if (!p) {
     box.innerHTML = `<div class="empty-list">${W.pages.length ? 'Pick a page on the left, or search.' : 'Your campaign wiki is empty.'}<br>
@@ -206,14 +227,14 @@ async function renderMain() {
 
 function updatePreview() {
   const el = $('#wikiPreview');
-  if (el && W.cur) el.innerHTML = renderMarkdown(W.cur.body, resolve, { editable: true }) || '<p class="hint">The preview shows here.</p>';
+  if (el && W.cur) el.innerHTML = md(W.cur.body, { editable: true }) || '<p class="hint">The preview shows here.</p>';
 }
 
 // ---------- right column: links and page info ----------
 
 function renderSide() {
   const box = $('#wikiSide'), p = W.cur;
-  if (!p || W.trashOpen) { box.innerHTML = ''; return; }
+  if (!p || W.trashOpen || W.galleryOpen) { box.innerHTML = ''; return; }
   const link = x => `<li><a class="wl" href="#" data-page="${x.id}">${esc(x.title)}</a> <small class="hint">${esc(catName(x.category))}</small></li>`;
   const out = p.links.map(l => (l.id ? `<li><a class="wl" href="#" data-page="${l.id}">${esc(l.title)}</a></li>`
     : `<li><a class="wl missing" href="#" data-new="${esc(l.text || l.target)}" title="No page yet: click to create it">${esc(l.text || l.target)}</a> <small class="hint">not written yet</small></li>`)).join('');
@@ -224,14 +245,15 @@ function renderSide() {
   const defs = catFields(p.category), vals = (p.fields || {})[p.category] || {};
   const pageVal = t => { const hit = resolve(t); return hit ? `<a class="wl" href="#" data-page="${hit.id}">${esc(t)}</a>` : `<a class="wl missing" href="#" data-new="${esc(t)}" title="No page yet: click to create it">${esc(t)}</a>`; };
   const filled = defs.filter(f => vals[f.key]);
+  const refVal = (kind, name) => refLink(kind, name, findRef(kind, name));
   const info = defs.length ? `<div class="blk infobox"><h4>${esc(catName(p.category).replace(/s$/, '').replace(/^Session log$/, 'Session'))}</h4>${filled.length
-    ? `<dl>${filled.map(f => `<dt>${esc(f.label)}</dt><dd class="${f.type === 'choice' ? `v-${esc(vals[f.key].toLowerCase().replace(/\s+/g, '-'))}` : ''}">${f.type === 'page' ? pageVal(vals[f.key])
+    ? `<dl>${filled.map(f => `<dt>${esc(f.label)}</dt><dd class="${f.type === 'choice' ? `v-${esc(vals[f.key].toLowerCase().replace(/\s+/g, '-'))}` : ''}">${f.type === 'page' ? pageVal(vals[f.key]) : f.type === 'char' || f.type === 'monster' ? refVal(f.type, vals[f.key])
       : f.type === 'date' ? esc(new Date(vals[f.key] + 'T00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })) : esc(vals[f.key])}</dd>`).join('')}</dl>`
     : `<p class="hint">Nothing filled in yet. ${W.editing ? 'Fill it in at the top of the editor.' : 'Click Edit to add details.'}</p>`}</div>` : '';
   const inside = `<div class="blk"><h4>Inside this page <span class="hint">${p.children.length || ''}</span></h4>
       ${p.children.length ? `<ul class="linklist">${p.children.map(link).join('')}</ul>` : ''}
       <button class="link" data-w="newchild">+ New page inside ${esc(p.title)}</button></div>`;
-  box.innerHTML = `${portrait}${info}${inside}<div class="blk"><h4>Linked from <span class="hint">${p.backlinks.length}</span></h4>
+  box.innerHTML = `${portrait}${info}${gameHtml(p)}${inside}<div class="blk"><h4>Linked from <span class="hint">${p.backlinks.length}</span></h4>
       ${p.backlinks.length ? `<ul class="linklist">${p.backlinks.map(link).join('')}</ul>` : '<p class="hint">No page links here yet. Link to it with [[' + esc(p.title) + ']].</p>'}</div>
     <div class="blk"><h4>Links to <span class="hint">${p.links.length}</span></h4>
       ${out ? `<ul class="linklist">${out}</ul>` : '<p class="hint">This page doesn\'t link anywhere yet.</p>'}</div>
@@ -242,9 +264,152 @@ function renderSide() {
 
 export function renderWiki() { renderNav(); renderMain(); renderSide(); }
 
+// ---------- links to the game: characters, creatures, saved fights ----------
+
+/** A game link (as the text renders it): opens the sheet, the stat block or the fight. */
+function refLink(kind, name, ref) {
+  const what = REF_KINDS[kind];
+  return `<a class="wl ref r-${kind}${ref?.found ? '' : ' missing'}" href="#" data-ref="${esc(`${kind}:${name}`)}" title="${esc(ref?.found
+    ? `${what}: ${ref.title}` : `No ${what.toLowerCase()} called "${name}" in the app yet`)}">${esc(ref?.title || name)}</a>`;
+}
+
+/** "In the game": the characters, creatures and fights the page names, with what can be done with them. */
+function gameHtml(p) {
+  if (!p.refs?.length) return '';
+  const card = r => {
+    const ref = `${r.kind}:${r.name}`, ch = r.kind === 'char' && r.found ? S.chars.get(r.id) : null;
+    const meta = !r.found ? `not in the app: ${r.kind === 'char' ? 'no character' : r.kind === 'fight' ? 'no saved fight' : 'no SRD or homebrew creature'} with this name`
+      : ch ? `${classLine(ch.sheet)} · AC ${ch.derived.ac} · HP ${ch.sheet.hp}/${ch.sheet.max_hp}` : `${REF_KINDS[r.kind]}${r.meta ? ` · ${r.meta}` : ''}`;
+    const btn = (act, label) => `<button class="btn sm" data-refact="${act}" data-ref="${esc(ref)}">${label}</button>`;
+    const acts = !r.found ? '' : r.kind === 'char' ? btn('sheet', 'Open sheet') + btn('add', 'Add to combat')
+      : r.kind === 'monster' ? btn('stat', 'Stat block') + btn('add', 'Add to combat') : btn('stat', 'Who\'s in it') + btn('add', 'Add to combat');
+    return `<li class="refcard r-${r.kind}"><div>${refLink(r.kind, r.name, r)}<small class="hint">${esc(meta)}</small></div>${acts ? `<div class="line">${acts}</div>` : ''}</li>`;
+  };
+  return `<div class="blk"><h4>In the game <span class="hint">${p.refs.length}</span></h4><ul class="refcards">${p.refs.map(card).join('')}</ul></div>`;
+}
+
+/** Act on a game link: 'open' (a click on the link), 'sheet', 'stat' or 'add'. */
+async function refAction(refText, act) {
+  const parts = splitRef(refText);
+  const r = parts && findRef(parts.kind, parts.name);
+  if (!r?.found) {
+    const what = REF_KINDS[parts?.kind] || 'thing';
+    return toast(`There's no ${what.toLowerCase()} called "${parts?.name}" in the app. Links to the game match by name${W.editing ? '' : ' (check the spelling, or create it first)'}.`);
+  }
+  if (act === 'add') {
+    if (r.kind === 'monster') return addMonster(r.idx);
+    if (r.kind === 'fight') return addFight(r.id);
+    const added = addChar(r.id);
+    return added && toast(`Added to combat: ${added}.`);
+  }
+  if (r.kind === 'char' && (act === 'open' || act === 'sheet')) {
+    if (W.cur) await saveWikiNow().catch(() => {});
+    S.currentChar = r.id;
+    return switchView('party');
+  }
+  return openRefDialog(r);
+}
+
+/** A creature's stat block, or a saved fight's creatures, in a dialog with Add to combat. */
+async function openRefDialog(r) {
+  const dlg = $('#refDlg');
+  let body;
+  if (r.kind === 'monster') {
+    let m;
+    try { m = await getEntry('monster', r.idx); } catch (e) { return toast(e.message); }
+    body = `<div class="ins-head"><h2>${esc(m.name)}</h2><p>${esc(monsterLine(m))}</p></div>${statBlock(m)}`;
+  } else {
+    W.fights = await api('/api/saved-encounters').catch(() => W.fights);
+    const f = W.fights.find(x => x.id === r.id);
+    const counts = {};
+    for (const c of f?.creatures || []) { const n = String(c.name).replace(/\s+\d+$/, ''); counts[n] = (counts[n] || 0) + 1; }
+    body = `<div class="ins-head"><h2>${esc(r.title)}</h2><p>Saved fight</p></div>
+      <ul class="linklist">${Object.entries(counts).map(([n, k]) => `<li>${k > 1 ? `${k}× ` : ''}${esc(n)}</li>`).join('') || '<li class="hint">No creatures.</li>'}</ul>`;
+  }
+  dlg.innerHTML = `<div class="refbody">${body}</div>
+    <div class="line"><span class="hint">${r.kind === 'monster' ? 'Uses the count and HP setting in the combat library.' : 'Adds them to the tracker.'}</span><span class="spacer"></span>
+      <button class="btn primary" data-refdlg="add">Add to combat</button><button class="btn" data-refdlg="close" autofocus>Close</button></div>`;
+  dlg.dataset.ref = `${r.kind}:${r.name}`;
+  if (!dlg.open) dlg.showModal();
+}
+
+/** "In the wiki": the pages that mention a character or creature (for the Party view and the combat inspector). */
+export async function showMentions(host, kind, name) {
+  if (!host || !name) return;
+  let list;
+  try { list = await api(`/api/wiki/mentions?kind=${kind}&name=${encodeURIComponent(name)}`); } catch { return; }
+  if (!host.isConnected) return;
+  host.innerHTML = list.length ? `<div class="blk"><h4>In the wiki <span class="hint">${list.length}</span></h4><ul class="linklist">${list.map(p =>
+    `<li><a class="wl" href="#" data-wikipage="${p.id}">${esc(p.title)}</a>${W.categories.length ? ` <small class="hint">${esc(catName(p.category))}</small>` : ''}</li>`).join('')}</ul></div>` : '';
+}
+
+/** Open a wiki page from another view. */
+export function openWikiPage(id) {
+  W.pendingOpen = id;
+  switchView('wiki');
+}
+
+// ---------- the image gallery ----------
+
+const kb = n => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+const isUnused = i => !i.pages.length && !i.trashed;
+
+/** The gallery's cards. mode 'manage' (the Images view: open, delete unused) or 'pick' (choose one for a page). */
+function galleryGrid(list, mode) {
+  return list.length ? `<ul class="gallery">${list.map(i => {
+    const used = i.pages.length ? `Used on ${i.pages.map(p => `<a class="wl" href="#" data-page="${p.id}">${esc(p.title)}</a>`).join(', ')}`
+      : i.trashed ? `Only on ${i.trashed} page${i.trashed > 1 ? 's' : ''} in the trash` : '<span class="unused">Not used on any page</span>';
+    const del = mode === 'manage' && isUnused(i) ? `<button class="link bad" data-imgdel="${i.file}">${S.confirm.delImg === i.file ? 'Click again to delete' : 'Delete'}</button>` : '';
+    return `<li><button class="gthumb" ${mode === 'pick' ? `data-pickimg="${i.file}"` : `data-lbopen="${i.file}"`} title="${mode === 'pick' ? 'Put this image in the page' : 'Open full-screen'}">
+        <img src="${imageUrl(i.file)}" alt="${esc(i.name)}" loading="lazy"></button>
+      <div class="gmeta"><b title="${esc(i.name)}">${esc(i.name)}</b><span class="hint">${kb(i.bytes)}</span>${mode === 'manage' ? `<span class="hint">${used}</span>` : ''}${del}</div></li>`;
+  }).join('')}</ul>` : '<p class="hint">No images here.</p>';
+}
+
+async function loadGallery() {
+  try { W.gallery = await api('/api/wiki/gallery'); } catch (e) { toast(e.message); W.gallery = []; }
+  return W.gallery;
+}
+
+async function galleryHtml() {
+  const all = await loadGallery(), unused = all.filter(isUnused);
+  const list = W.galleryFilter === 'unused' ? unused : all;
+  const tab = (k, label) => `<button class="${W.galleryFilter === k ? 'on' : ''}" data-gfilter="${k}">${label}</button>`;
+  return `<header class="wikihead"><div class="titles"><h1>Images</h1>
+      <p class="hint">Every image you added to the wiki. ${all.length} image${all.length === 1 ? '' : 's'}, ${kb(all.reduce((n, i) => n + i.bytes, 0))} in data/wiki_images.</p></div>
+      <div class="tabs">${tab('all', 'All')}${tab('unused', `Not used (${unused.length})`)}</div></header>
+    ${galleryGrid(list, 'manage')}
+    ${unused.length ? '<p class="hint">Images no page uses (not even one in the trash) can be deleted. Images in use are kept.</p>' : ''}`;
+}
+
+/** Choose an image from the gallery for the page being edited. */
+async function openPicker() {
+  const dlg = $('#galleryDlg'), caretAt = $('#wikiBody')?.selectionStart;
+  dlg.dataset.caret = caretAt ?? '';
+  dlg.innerHTML = '<p class="hint">Loading…</p>';
+  if (!dlg.open) dlg.showModal();
+  const list = await loadGallery();
+  dlg.innerHTML = `<div class="line"><h2>Pick an image</h2><span class="spacer"></span><button class="btn" data-gdlg="close">Close</button></div>
+    ${list.length ? galleryGrid(list, 'pick') : '<p class="hint">No images yet: upload one with Add image, or paste or drop one into the text.</p>'}`;
+}
+
+function insertPicked(file) {
+  const dlg = $('#galleryDlg'), ta = $('#wikiBody');
+  dlg.close();
+  const img = (W.gallery || []).find(i => i.file === file);
+  if (!ta || !img) return;
+  const at = insertBlock(ta.value, dlg.dataset.caret === '' ? ta.value.length : +dlg.dataset.caret, imageMarkdown(file, img.name));
+  ta.value = at.text;
+  ta.setSelectionRange(at.caret, at.caret);
+  ta.focus();
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 // ---------- [[ suggestions while writing ----------
 
-let sugg = { list: [], i: 0 };
+// each suggestion: { insert: the link target to write, html: how it's listed }
+let sugg = { list: [], i: 0, monsters: new Map() };
+let monsterTimer;
 
 /** Where the caret is in the textarea, in pixels (a hidden copy of the text up to the caret is measured). */
 function caretXY(ta) {
@@ -267,15 +432,34 @@ function updateSuggest() {
   if (!ta || !ul) return;
   const open = openLink(ta.value, ta.selectionStart);
   if (!open) { ul.hidden = true; sugg.list = []; return; }
-  const q = normTitle(open.query);
-  const all = W.pages.filter(p => p.id !== W.cur?.id);
-  sugg.list = [...all.filter(p => normTitle(p.title).startsWith(q)), ...all.filter(p => !normTitle(p.title).startsWith(q) && normTitle(p.title).includes(q))]
-    .slice(0, 8).map(p => p.title);
-  if (q && !byTitle.has(q)) sugg.list.push({ create: open.query.trim() });
+  // "monster:gob" looks only for creatures; plain text looks at pages first, then the game
+  const pre = open.query.match(/^\s*(char|monster|fight)\s*:\s*(.*)$/i);
+  const only = pre?.[1].toLowerCase(), q = normTitle(pre ? pre[2] : open.query);
+  const rank = names => [...names.filter(n => normTitle(n).startsWith(q)), ...names.filter(n => !normTitle(n).startsWith(q) && normTitle(n).includes(q))];
+  const tag = kind => ` <small class="hint">${REF_KINDS[kind].toLowerCase()}</small>`;
+  const list = [];
+  if (!only) list.push(...rank(W.pages.filter(p => p.id !== W.cur?.id).map(p => p.title)).slice(0, 6).map(t => ({ insert: t, html: esc(t) })));
+  if (q || only) {
+    if (!only || only === 'char') list.push(...rank([...S.chars.values()].map(c => c.sheet.name)).slice(0, 3).map(n => ({ insert: `char:${n}`, html: esc(n) + tag('char') })));
+    if (!only || only === 'fight') list.push(...rank((W.fights || []).map(f => f.name)).slice(0, 3).map(n => ({ insert: `fight:${n}`, html: esc(n) + tag('fight') })));
+    if (!only || only === 'monster') {
+      const found = sugg.monsters.get(q);
+      if (found) list.push(...found.slice(0, 4).map(n => ({ insert: `monster:${n}`, html: esc(n) + tag('monster') })));
+      else if (q.length >= 2) {                         // creatures come from the server: ask, then list them
+        clearTimeout(monsterTimer);
+        monsterTimer = setTimeout(async () => {
+          const rows = await api(`/api/search?kind=monster&q=${encodeURIComponent(q)}&limit=6`).catch(() => []);
+          sugg.monsters.set(q, rows.map(r => r.name));
+          updateSuggest();                              // still typing that link? (it checks the caret again)
+        }, 150);
+      }
+    }
+  }
+  if (q && !only && !byTitle.has(q)) list.push({ insert: open.query.trim(), html: `<span class="hint">New page:</span> ${esc(open.query.trim())}` });
+  sugg.list = list;
   sugg.i = Math.min(sugg.i, Math.max(0, sugg.list.length - 1));
   if (!sugg.list.length) { ul.hidden = true; return; }
-  ul.innerHTML = sugg.list.map((t, i) => `<li class="${i === sugg.i ? 'on' : ''}" data-sug="${i}">${typeof t === 'string'
-    ? esc(t) : `<span class="hint">New page:</span> ${esc(t.create)}`}</li>`).join('');
+  ul.innerHTML = sugg.list.map((t, i) => `<li class="${i === sugg.i ? 'on' : ''}" data-sug="${i}">${t.html}</li>`).join('');
   const { x, y } = caretXY(ta);
   Object.assign(ul.style, { left: `${Math.min(x, ta.clientWidth - 200)}px`, top: `${y + 4}px` });
   ul.hidden = false;
@@ -284,8 +468,7 @@ function updateSuggest() {
 function acceptSuggest(i = sugg.i) {
   const ta = $('#wikiBody'), t = sugg.list[i];
   if (!ta || t === undefined) return;
-  const title = typeof t === 'string' ? t : t.create;
-  const done = completeLink(ta.value, ta.selectionStart, title);
+  const done = completeLink(ta.value, ta.selectionStart, t.insert);
   ta.value = done.text;
   ta.setSelectionRange(done.caret, done.caret);
   ta.dispatchEvent(new Event('input', { bubbles: true }));       // saves and updates the preview like typing
@@ -357,9 +540,10 @@ function pickFiles(what) {
 
 const LB = { list: [], i: 0, zoom: false };
 
-/** Open the viewer on `file`, with the open page's portrait and images to step through. */
+/** Open the viewer on `file`, stepping through the open page's portrait and images (or the gallery's). */
 function openViewer(file) {
-  const files = [W.cur?.portrait, ...[...document.querySelectorAll('#wikiPage img[data-img]')].map(x => x.dataset.img)].filter(Boolean);
+  const files = W.galleryOpen ? (W.gallery || []).map(i => i.file)
+    : [W.cur?.portrait, ...[...document.querySelectorAll('#wikiPage img[data-img]')].map(x => x.dataset.img)].filter(Boolean);
   LB.list = [...new Set(files)];
   if (!LB.list.includes(file)) LB.list.unshift(file);
   LB.i = LB.list.indexOf(file);
@@ -373,13 +557,16 @@ function showViewer() {
   const file = LB.list[LB.i], dlg = $('#lightbox');
   const img = dlg.querySelector('.lb-stage img');
   const shown = document.querySelector(`#wikiPage img[data-img="${file}"]`);
+  const caption = W.galleryOpen ? (W.gallery || []).find(i => i.file === file)?.name : shown?.alt;
   img.src = imageUrl(file);
-  img.alt = shown?.alt || '';
-  dlg.querySelector('.lb-cap').textContent = shown?.alt || (file === W.cur?.portrait ? `${W.cur.title}: portrait` : '');
+  img.alt = caption || '';
+  dlg.querySelector('.lb-cap').textContent = caption || (file === W.cur?.portrait ? `${W.cur.title}: portrait` : '');
   dlg.querySelector('.lb-count').textContent = LB.list.length > 1 ? `${LB.i + 1} of ${LB.list.length}` : '';
   dlg.querySelectorAll('.lb-nav').forEach(b => { b.hidden = LB.list.length < 2; });
   const isPortrait = file === W.cur?.portrait;
-  Object.assign(dlg.querySelector('[data-lb="portrait"]'), { disabled: isPortrait || !W.cur, textContent: isPortrait ? 'Page portrait' : 'Use as page portrait' });
+  const pb = dlg.querySelector('[data-lb="portrait"]');
+  pb.hidden = W.galleryOpen;                       // the gallery isn't about one page
+  Object.assign(pb, { disabled: isPortrait || !W.cur, textContent: isPortrait ? 'Page portrait' : 'Use as page portrait' });
   setZoom(LB.zoom);
 }
 
@@ -465,12 +652,26 @@ function onClick(e) {
   }
   const sg = e.target.closest('[data-sug]');
   if (sg) { e.preventDefault(); return acceptSuggest(+sg.dataset.sug); }
+  const ra = e.target.closest('[data-refact]');
+  if (ra) return refAction(ra.dataset.ref, ra.dataset.refact);
+  const rl = e.target.closest('a[data-ref]');
+  if (rl) { e.preventDefault(); return refAction(rl.dataset.ref, 'open'); }
+  const gf = e.target.closest('[data-gfilter]');
+  if (gf) { W.galleryFilter = gf.dataset.gfilter; S.confirm.delImg = null; return renderMain(); }
+  const del = e.target.closest('[data-imgdel]');
+  if (del) {
+    const file = del.dataset.imgdel;
+    if (S.confirm.delImg !== file) { S.confirm.delImg = file; return renderMain(); }
+    S.confirm.delImg = null;
+    return api(`/api/wiki/images/${file}`, { method: 'DELETE' }).then(() => { toast('Image deleted.'); renderMain(); }, err => toast(err.message));
+  }
   const a = e.target.closest('[data-w]')?.dataset.w;
   if (!a || !W.cur) return;
   if (a !== 'delete') S.confirm.delPage = null;
   if (a === 'edit') { W.editing = true; renderMain(); return $('#wikiBody')?.focus(); }
   if (a === 'done') return finishEditing();
   if (a === 'addimage') return pickFiles('text');
+  if (a === 'fromgallery') return openPicker();
   if (a === 'portrait-upload') return pickFiles('portrait');
   if (a === 'portrait-clear') return setPortrait(null);
   if (a === 'newchild') return newPage(null, W.cur);
@@ -540,9 +741,44 @@ export function initWiki() {
   $('#wikiTrash').onclick = async () => {
     if (W.cur) await saveWikiNow().catch(() => {});
     W.trashOpen = !W.trashOpen;
+    W.galleryOpen = false;
     W.editing = false;
     renderWiki();
   };
+  $('#wikiImages').onclick = async () => {
+    if (W.cur) await saveWikiNow().catch(() => {});
+    W.galleryOpen = !W.galleryOpen;
+    W.trashOpen = false;
+    W.editing = false;
+    S.confirm.delImg = null;
+    renderWiki();
+  };
+  // the stat block / saved fight dialog, and the gallery picker
+  $('#refDlg').addEventListener('click', e => {
+    if (handleRollClick(e)) return;
+    const a = e.target.closest('[data-refdlg]')?.dataset.refdlg;
+    if (a === 'add') { refAction($('#refDlg').dataset.ref, 'add'); $('#refDlg').close(); }
+    if (a === 'close') $('#refDlg').close();
+  });
+  $('#galleryDlg').addEventListener('close', () => { $('#galleryDlg').innerHTML = ''; });   // no hidden copy of the grid
+  $('#refDlg').addEventListener('close', () => { $('#refDlg').innerHTML = ''; });
+  $('#galleryDlg').addEventListener('click', e => {
+    const pick = e.target.closest('[data-pickimg]');
+    if (pick) return insertPicked(pick.dataset.pickimg);
+    if (e.target.closest('[data-gdlg="close"]') || e.target === $('#galleryDlg')) $('#galleryDlg').close();
+  });
+  // creature fields suggest SRD and homebrew names as you type
+  let monTimer;
+  $('#wikiPage').addEventListener('input', e => {
+    if (!e.target.matches('[data-monsters]')) return;
+    clearTimeout(monTimer);
+    const q = e.target.value.trim();
+    monTimer = setTimeout(async () => {
+      const rows = q ? await api(`/api/search?kind=monster&q=${encodeURIComponent(q)}&limit=12`).catch(() => []) : [];
+      const dl = $('#wikiMonsters');
+      if (dl) dl.innerHTML = rows.map(r => `<option value="${esc(r.name)}">${esc(r.meta)}</option>`).join('');
+    }, 150);
+  });
   $('#wikiCats').addEventListener('click', e => {
     const b = e.target.closest('[data-cat]');
     if (!b) return;
@@ -611,7 +847,7 @@ export function initWiki() {
     if (W.cur?.id === res.id) {
       // keep what's being typed; take the server's links, dates and (when nothing newer is waiting) the text
       Object.assign(W.cur, { links: res.links, backlinks: res.backlinks, updated: res.updated, title: res.title, portrait: res.portrait,
-        tags: res.tags, parent_id: res.parent_id, breadcrumbs: res.breadcrumbs, children: res.children,
+        tags: res.tags, parent_id: res.parent_id, breadcrumbs: res.breadcrumbs, children: res.children, refs: res.refs,
         ...(latest ? { fields: res.fields } : {}), ...(latest && !W.editing ? { body: res.body } : {}) });
       if (latest) {                       // show the tags as stored ("Act 2" -> act-2), unless they're being typed
         const tagsIn = $('#wikiTagsIn');
@@ -632,6 +868,7 @@ export function initWiki() {
       if (li) Object.assign(li, { category: res.category, updated: res.updated, portrait: res.portrait });
     }
     renderNav(); renderSide();
+    if (W.editing && W.cur?.id === res.id) updatePreview();       // newly named characters and creatures resolve
     if (!W.editing && W.cur?.id === res.id) renderMain();
   });
   onWikiError(e => {
@@ -657,6 +894,12 @@ export function initWiki() {
 
 export async function showWiki() {
   await loadList();
+  W.fights = await api('/api/saved-encounters').catch(() => W.fights || []);
   if (W.cur && !W.pages.some(p => p.id === W.cur.id)) W.cur = null;
+  if (W.pendingOpen) {                    // opened from another view ("In the wiki")
+    const id = W.pendingOpen;
+    W.pendingOpen = null;
+    return openPage(id);
+  }
   renderWiki();
 }

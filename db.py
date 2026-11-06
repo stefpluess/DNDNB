@@ -69,6 +69,13 @@ CREATE TABLE IF NOT EXISTS wiki_links (
     PRIMARY KEY (src, target)
 );
 CREATE INDEX IF NOT EXISTS wiki_links_target ON wiki_links(target);
+CREATE TABLE IF NOT EXISTS wiki_refs (
+    src  INTEGER NOT NULL,   -- the page the link is on
+    kind TEXT NOT NULL,      -- char | monster | fight
+    name TEXT NOT NULL,      -- the name, normalized (wiki.norm)
+    PRIMARY KEY (src, kind, name)
+);
+CREATE INDEX IF NOT EXISTS wiki_refs_name ON wiki_refs(kind, name);
 """
 
 
