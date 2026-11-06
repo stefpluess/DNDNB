@@ -19,7 +19,7 @@ add("alchemist-tce", S("artificer", "Alchemist", TCE, [
     F(9, "Restorative Reagents", "Elixirs also grant 2d6 + Int modifier temp HP; cast Lesser Restoration without a slot Int-modifier times per Long Rest.",
       resource=("restorative_reagents", "Free Lesser Restoration", "max(1, int)", LR)),
     F(15, "Chemical Mastery", "Resistance to acid and poison, immune to Poisoned; cast Tasha's Caustic Brew and Heal once each per Long Rest without a slot.",
-      resource=("chemical_mastery", "Chemical Mastery spells", 2, LR)),
+      resource=("chemical_mastery", "Chemical Mastery spells", 2, LR), resist=["acid", "poison"], cond_immune=["poisoned"]),
 ]))
 
 add("armorer-tce", S("artificer", "Armorer", TCE, [
@@ -179,7 +179,8 @@ add("spores-tce", S("druid", "Circle of Spores", TCE, [
     F(6, "Fungal Infestation", "Reaction when a Small or Medium beast or humanoid dies within 10 ft: it rises as a 1-HP zombie under your control for 1 hour. Wis-modifier times per Long Rest.",
       resource=("fungal_infestation", "Fungal Infestation", "max(1, wis)", LR)),
     F(10, "Spreading Spores", "While Symbiotic Entity is active, Bonus Action: move your Halo of Spores to a 10-ft cube within 30 ft for 1 minute."),
-    F(14, "Fungal Body", "Immune to Blinded, Deafened, Frightened and Poisoned; critical hits against you count as normal hits unless you're Incapacitated."),
+    F(14, "Fungal Body", "Immune to Blinded, Deafened, Frightened and Poisoned; critical hits against you count as normal hits unless you're Incapacitated.",
+      cond_immune=["blinded", "deafened", "frightened", "poisoned"]),
 ], level=2))
 
 add("stars-tce", S("druid", "Circle of Stars", TCE, [
@@ -195,7 +196,8 @@ add("stars-tce", S("druid", "Circle of Stars", TCE, [
     F(6, "Cosmic Omen", "After a Long Rest, roll a die: even = Weal (Reaction: add 1d6 to a roll within 30 ft), odd = Woe (subtract 1d6). PB times per Long Rest.",
       resource=("cosmic_omen", "Cosmic Omen", "pb", LR)),
     F(10, "Twinkling Constellations", "Starry Form's 1d8 becomes 2d8, the Dragon grants Fly 20 ft, and you can switch constellation at the start of each turn."),
-    F(14, "Full of Stars", "In Starry Form you have resistance to bludgeoning, piercing and slashing damage."),
+    F(14, "Full of Stars", "In Starry Form you have resistance to bludgeoning, piercing and slashing damage. (Add a \"Starry Form\" condition in combat.)",
+      resist=["bludgeoning", "piercing", "slashing"], needs="Starry Form"),
 ], level=2))
 
 add("wildfire-tce", S("druid", "Circle of Wildfire", TCE, [
@@ -222,7 +224,7 @@ add("psi-warrior-tce", S("fighter", "Psi Warrior", TCE, [
     F(3, "Psionic Strike", "Once on each of your turns after a weapon hit within 30 ft, spend a Psionic Energy die: + the die + Int modifier force damage.",
       rider=dict(name="Psionic Strike (spend a die)", dice=[(3, "1d6+{int}"), (5, "1d8+{int}"), (11, "1d10+{int}"), (17, "1d12+{int}")], type="force", once="turn")),
     F(7, "Telekinetic Adept", "Psi-Powered Leap (Fly speed of twice your walking speed this turn, once per Short Rest or a die); Telekinetic Thrust: a Psionic Strike target makes a Str save or is knocked Prone or pushed 10 ft."),
-    F(10, "Guarded Mind", "Resistance to psychic damage; spend a die at the start of your turn to end Charmed and Frightened."),
+    F(10, "Guarded Mind", "Resistance to psychic damage; spend a die at the start of your turn to end Charmed and Frightened.", resist=["psychic"]),
     F(15, "Bulwark of Force", "Bonus Action: up to Int-modifier creatures within 30 ft get half cover for 1 minute. Once per Long Rest, or spend a die.",
       resource=("bulwark_of_force", "Bulwark of Force", 1, LR)),
     F(18, "Telekinetic Master", "Cast Telekinesis (Int) without components once per Long Rest (or spend a die); while concentrating on it, make one weapon attack as a Bonus Action.",
@@ -349,7 +351,7 @@ add("aberrant-mind-tce", S("sorcerer", "Aberrant Mind", TCE, [
               5: ["Hunger of Hadar", "Sending"], 7: ["Evard's Black Tentacles", "Summon Aberration"], 9: ["Rary's Telepathic Bond", "Telekinesis"]}),
     F(1, "Telepathic Speech", "Bonus Action: telepathic link with a creature within 30 ft for Sorcerer-level minutes."),
     F(6, "Psionic Sorcery", "Cast a Psionic Spell by spending sorcery points equal to its level, without verbal or somatic components."),
-    F(6, "Psychic Defenses", "Resistance to psychic damage; Advantage on saves against Charmed and Frightened."),
+    F(6, "Psychic Defenses", "Resistance to psychic damage; Advantage on saves against Charmed and Frightened.", resist=["psychic"]),
     F(14, "Revelation in Flesh", "Bonus Action, spend sorcery points: see invisible, fly, swim and breathe water, or squeeze through tiny spaces, for 10 minutes."),
     F(18, "Warping Implosion", "Action: teleport up to 120 ft; creatures within 30 ft of where you left make a Str save or take 3d10 force and are pulled toward that spot. Once per Long Rest, or 5 sorcery points.",
       resource=("warping_implosion", "Warping Implosion", 1, LR)),
@@ -379,7 +381,7 @@ add("fathomless-tce", S("warlock", "The Fathomless", TCE, [
       attack=dict(name="Tentacle of the Deeps", dice=[(1, "1d8"), (10, "2d8")], type="cold", ability="spell", melee=True, add_mod=False,
                   range="10 ft of the tentacle", note="Bonus Action; hit: speed −10 ft until your next turn")),
     F(1, "Gift of the Sea", "Swim speed 40 ft; breathe underwater."),
-    F(6, "Oceanic Soul", "Resistance to cold damage; you and fully submerged creatures understand each other."),
+    F(6, "Oceanic Soul", "Resistance to cold damage; you and fully submerged creatures understand each other.", resist=["cold"]),
     F(6, "Guardian Coil", "Reaction when a creature within 10 ft of the tentacle takes damage: reduce it by 1d8 (2d8 at 10)."),
     F(10, "Grasping Tentacles", "Evard's Black Tentacles always known; cast it once per Long Rest without a slot, gaining temp HP equal to your Warlock level; damage can't break your concentration on it.",
       resource=("grasping_tentacles", "Free Black Tentacles", 1, LR)),
@@ -406,7 +408,7 @@ add("genie-tce", S("warlock", "The Genie", TCE, [
 add("bladesinging-tce", S("wizard", "Bladesinging", TCE, [
     F(2, "Training in War and Song", "Light armor training and one type of one-handed melee weapon; Performance.", armor=["light"]),
     F(2, "Bladesong", "Bonus Action, 1 minute (not in medium or heavy armor or with a shield): + Int modifier (minimum +1) to AC, +10 ft walking speed, Advantage on Acrobatics, + Int modifier to Con saves for concentration. PB times per Long Rest. (Add a \"Bladesong\" condition in combat and raise AC by hand.)",
-      resource=("bladesong", "Bladesong", "pb", LR)),
+      resource=("bladesong", "Bladesong", "pb", LR), ac_bonus=dict(add="int", min=1, needs="Bladesong")),
     F(6, "Extra Attack", "Attack twice when you take the Attack action; you can cast a cantrip in place of one attack."),
     F(10, "Song of Defense", "Reaction when you take damage while Bladesong is active: spend a spell slot to reduce the damage by five times the slot's level."),
     F(14, "Song of Victory", "While Bladesong is active, add your Int modifier (minimum +1) to melee weapon damage.",

@@ -104,13 +104,13 @@ function chipHtml(x, i) {
 /** A creature's save bonus for ability `ab` ('wis'), or null when unknown (custom creatures). */
 function saveBonus(c, ab) {
   const ch = ctx.linked(c);
-  if (ch) return ch.derived.saves?.[ab]?.bonus ?? null;          // already includes Exhaustion
+  if (ch) return ch.derived.saves?.[ab]?.bonus == null ? null : ch.derived.saves[ab].bonus + R.auraSaveBonus(ctx, c);   // Exhaustion included
   const m = c.sb || (c.ref && S.entryCache.get(c.ref));
   if (!m) return null;
   const long = S.meta.ability_long[ab];
   const v = (m.saving_throws_all || {})[long] ?? (m.saving_throws || {})[long] ?? (m.modifiers || {})[long]
     ?? abilityMod((m.ability_scores || {})[long] ?? 10);
-  return v - 2 * R.exhaustion(ctx, c);
+  return v - 2 * R.exhaustion(ctx, c) + R.auraSaveBonus(ctx, c);
 }
 
 function renderPrompts() {
@@ -216,7 +216,21 @@ function rowHtml(c) {
   </div>`;
 }
 
+/** A party member's sheet decides their defenses, state-dependent AC and Danger Sense in combat. */
+function syncFromSheets() {
+  for (const c of S.enc.c) {
+    const d = ctx.linked(c)?.derived;
+    if (!d) continue;
+    const def = d.defenses || {};
+    c.def = Object.values(def).some(l => l.length) ? { vuln: [], ...def } : null;
+    c.cdef = d.cdef || [];
+    c.acCond = d.ac_cond || [];
+    c.dexSaveAdv = d.dex_save_adv || null;
+  }
+}
+
 export function renderTracker() {
+  syncFromSheets();
   const L = R.sorted(S.enc);
   const cur = S.enc.c.find(c => c.id === S.enc.active);
   if (S.enc.active && !cur) S.enc.active = null;
@@ -515,7 +529,9 @@ function attackHtml(c) {
   return `<div class="blk"><h4>Attack</h4>
     <div class="line"><label class="hint">Target <select class="field" id="atkTarget"><option value="">None: just roll</option>${others.map(x =>
       `<option value="${x.id}"${t?.id === x.id ? ' selected' : ''}>${esc(who(x))} (AC ${R.acOf(ctx, x)})</option>`).join('')}</select></label>
-      <select class="field" id="atkMode" aria-label="Roll with">${Object.entries(MODES).map(([k, l]) => `<option value="${k}"${k === mode ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <select class="field" id="atkMode" aria-label="Roll with">${Object.entries(MODES).map(([k, l]) => `<option value="${k}"${k === mode ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      <select class="field" id="atkCover" aria-label="Target's cover">${[['none', 'No cover'], ['half', 'Half cover (+2)'], ['three_quarters', 'Three-quarters (+5)']].map(([k, l]) =>
+        `<option value="${k}"${k === (S.atk.cover[c.id] || 'none') ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
     ${hints.map(h => `<p class="hint atkhint">${esc(h.text)}</p>`).join('')}
     ${result}
     <p class="hint">${t ? `Click a to-hit bonus below to attack ${esc(who(t))}.` : 'Pick a target, then click a to-hit bonus below to roll against its AC.'}</p></div>`;
@@ -550,14 +566,17 @@ function attackTarget(c, t, btn) {
   const mode = S.atk.mode[c.id] || 'normal';
   const dice = mode === 'normal' ? [d20()] : [d20(), d20()];
   const pen = ctx.linked(c) ? 0 : 2 * R.exhaustion(ctx, c);          // a sheet's bonus already includes Exhaustion
-  const ac = R.acOf(ctx, t);
+  const coverKey = S.atk.cover[c.id] || 'none';
+  const ignoresCover = ctx.linked(c)?.derived.ignore_cover && coverKey !== 'none';
+  const cover = ignoresCover ? 0 : R.COVER[coverKey];
+  const ac = R.acOf(ctx, t) + cover;
   const critOn = JSON.parse(btn.dataset.extra || '{}').crit || 20;
   const ex = rollExtras(c);
   const r = R.attackOutcome({ dice, mode, bonus, pen, ac, critOn, extra: ex.total });
   const feat = btn.dataset.feat || 'Attack';
   const res = r.crit ? 'critical hit' : r.hit ? 'hit' : 'miss';
   pushLog(`${who(c)} · ${feat} vs ${who(t)}: ${res}`,
-    { total: r.total, detail: `[${dice.join(',')}]${mode !== 'normal' ? ` ${mode}` : ''} ${bonus >= 0 ? '+' : '−'} ${Math.abs(bonus)}${pen ? ` − ${pen} exhaustion` : ''}${ex.detail} vs AC ${ac}` },
+    { total: r.total, detail: `[${dice.join(',')}]${mode !== 'normal' ? ` ${mode}` : ''} ${bonus >= 0 ? '+' : '−'} ${Math.abs(bonus)}${pen ? ` − ${pen} exhaustion` : ''}${ex.detail} vs AC ${ac}${cover ? ` (cover +${cover})` : ignoresCover ? ' (Sharpshooter ignores cover)' : ''}` },
     r.crit ? 'crit' : r.nat === 1 ? 'fumble' : '');
   S.atk.last = { by: c.id, target: t.id, feat, parts: JSON.parse(btn.dataset.dmg || '[]'), extra: JSON.parse(btn.dataset.extra || '{}'), ac, ...r };
   renderInspector().then(() => $('.atkres')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
@@ -601,6 +620,28 @@ function applyAttack(c) {
   const notes = applied.filter(p => p.m !== 'normal').map(p => `${p.t ? p.t.toLowerCase() + ' ' : ''}${(R.DAMAGE_MODS[p.m] || 'resistant + vulnerable').toLowerCase()}`);
   if (smite && ch) scheduleCharSave(c.charId);
   changed(t, [`${who(t)} takes ${n}${notes.length ? ` (${notes.join(', ')})` : ''}.`, ...(n > 0 ? R.damage(ctx, t, n, last.crit) : [])]);
+}
+
+// ---------- auras a party member extends to allies ----------
+
+function auraHtml(c) {
+  const auras = ctx.linked(c)?.derived.auras || [];
+  if (!auras.length) return '';
+  const allies = R.sorted(S.enc).filter(x => x.id !== c.id && x.kind !== 'foe');
+  const inAura = x => x.conds.some(k => R.STATUS[k.n]?.aura && k.src === c.id);
+  return `<div class="blk"><h4>Auras <span class="hint">${esc(auras.map(a => a.name + (a.v ? ` +${a.v}` : '')).join(', '))}</span></h4>
+    ${allies.length ? `<div class="checks">${allies.map(x => `<label><input type="checkbox" data-aura="${x.id}"${inAura(x) ? ' checked' : ''}> ${esc(who(x))}</label>`).join('')}</div>
+      <p class="hint">Tick the allies within range (10 ft; 30 ft from level 18). They get these auras while ${esc(who(c))} is conscious.</p>` : '<p class="hint">No allies in the fight.</p>'}</div>`;
+}
+
+function setAura(c, allyId, on) {
+  const ally = S.enc.c.find(x => x.id === allyId);
+  if (!ally) return;
+  remember(`${on ? 'Extend' : 'Withdraw'} ${who(c)}'s auras ${on ? 'to' : 'from'} ${who(ally)}`);
+  ally.conds = ally.conds.filter(k => !(R.STATUS[k.n]?.aura && k.src === c.id));
+  const msgs = on ? ctx.linked(c).derived.auras.flatMap(a => R.applyStatus(ctx, ally, a.name, c, a.v)) : [];
+  changed(ally, msgs);
+  renderTracker(); renderInspector();
 }
 
 // ---------- casting spells that leave an effect (Hunter's Mark, Hex, Bless...) ----------
@@ -727,6 +768,7 @@ function combatantPanel(c) {
     <div class="blk"><h4>Spell slots ${ch ? '<span class="hint">from sheet</span>' : `<button class="link" data-a="editslots">${editing ? 'Done' : 'Edit'}</button>`}</h4>${slotHtml}</div>
     ${attackHtml(c)}
     ${castHtml(c)}
+    ${auraHtml(c)}
     ${summonHtml(c)}
     ${ch ? derivedHtml(ch, { compact: true }) : ''}
     <div id="sbHost"></div>
@@ -1103,6 +1145,8 @@ export function initCombat() {
     if (c && e.target.matches('[data-respool]') && ctx.linked(c)) { remember(`Resource for ${who(c)}`); onResourceEvent(e, ctx.linked(c)); return renderInspector(); }
     if (c && e.target.id === 'insType') { $('#insMod').value = R.defenseMod(R.defensesOf(c), e.target.value); return; }
     if (e.target.id === 'castSpell') { S.castSpell = e.target.value; return renderInspector(); }
+    if (c && e.target.matches('[data-aura]')) return setAura(c, e.target.dataset.aura, e.target.checked);
+    if (c && e.target.id === 'atkCover') { S.atk.cover[c.id] = e.target.value; return; }
     if (!c || !['atkTarget', 'atkMode'].includes(e.target.id)) return;
     if (e.target.id === 'atkTarget') { S.atk.target[c.id] = e.target.value; if (S.atk.last?.by === c.id) S.atk.last = null; }
     else S.atk.mode[c.id] = e.target.value;

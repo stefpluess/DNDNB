@@ -26,6 +26,11 @@ The catalog lives in subclass_data.py. A feature is F(level, name, summary, **ef
   mark_die="1d10"                   Hunter's Mark's damage die (Foe Slayer)
   melee_ability="cha"               melee weapons may use this ability (Pact of the Blade)
   check=dict(skills=[...], ...)     a check bonus limited to some skills
+  resist=[...], immune=[...], cond_immune=[...]   damage resistances / immunities and condition immunities;
+                                    with needs="Raging" they apply only while that condition is set
+  ac_bonus=dict(add="int", min=1, needs="Bladesong")  AC bonus while a condition is set
+  dex_save_adv=True                 Advantage on Dex saves unless Incapacitated (Danger Sense)
+  aura=dict(name="Aura of Protection", value="cha")   an aura the character can extend to allies in combat
 Class features use the same keys; they live in subclass_data/classes.py.
   options=[(key, name, summary, {effects}), ...]  a choice the player makes; the chosen option's effects apply
 Formulas use: level, pb, half (level // 2), str, dex, con, int, wis, cha (modifiers), and max(...).
@@ -115,7 +120,9 @@ def effects(sheet, cls, level, pb, mods):
     out = {"key": None, "name": None, "source": None, "features": [], "class_features": [], "warnings": [],
            "armor": [], "weapons": [], "ac_unarmored": [], "crit": 20, "resources": [], "riders": [], "checks": [],
            "init": 0, "attacks": [], "magic_weapon_ability": None, "melee_ability": None, "hp_per_level": 0,
-           "spells": {}, "summons": [], "third_caster": None, "saves": [], "save_bonus": [], "scores": {}, "mark_die": None}
+           "spells": {}, "summons": [], "third_caster": None, "saves": [], "save_bonus": [], "scores": {}, "mark_die": None,
+           "defenses": {"resist": [], "immune": [], "vuln": [], "condImmune": []}, "cdef": [], "ac_cond": [],
+           "dex_save_adv": None, "auras": []}
     _features(CLASS_FEATURES.get(cls, []), level, choices, out["class_features"], out, v)
     out["class_spells"], out["spells"] = out["spells"], {}          # the class's always-prepared spells, shown apart
     sc = SUBCLASSES.get(sheet.get("subclass") or "")
@@ -153,6 +160,20 @@ def class_catalog():
 
 
 def _collect(out, e, v, feature):
+    if any(k in e for k in ("resist", "immune", "cond_immune")):
+        g = {"resist": e.get("resist", []), "immune": e.get("immune", []), "condImmune": e.get("cond_immune", [])}
+        if e.get("needs"):
+            out["cdef"].append({"needs": e["needs"], **g, "from": feature})
+        else:
+            for k, xs in g.items():
+                out["defenses"][k] = sorted(set(out["defenses"][k]) | set(xs))
+    if "ac_bonus" in e:
+        b = e["ac_bonus"]
+        out["ac_cond"].append({"needs": b["needs"], "ac": max(b.get("min", -99), v[b["add"]]) if b.get("add") else b["ac"], "from": feature})
+    if e.get("dex_save_adv"):
+        out["dex_save_adv"] = feature
+    if "aura" in e:
+        out["auras"].append({"name": e["aura"]["name"], "v": max(1, v[e["aura"]["value"]]) if e["aura"].get("value") else None, "from": feature})
     out["armor"] += e.get("armor", [])
     out["weapons"] += e.get("weapons", [])
     out["saves"] += e.get("saves", [])

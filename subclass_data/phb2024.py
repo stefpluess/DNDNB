@@ -12,7 +12,7 @@ PSI_DIE24 = [(3, "1d6"), (5, "1d8"), (11, "1d10"), (17, "1d12")]
 add("berserker-2024", S("barbarian", "Path of the Berserker", P24, [
     F(3, "Frenzy", "While raging with Reckless Attack, the first creature you hit on your turn takes extra damage: as many d6s as your Rage Damage bonus.",
       rider=dict(name="Frenzy (Reckless Attack)", dice=[(3, "2d6"), (9, "3d6"), (16, "4d6")], once="turn", needs="Raging", unarmed=True)),
-    F(6, "Mindless Rage", "Immune to Charmed and Frightened while raging; rage ends those conditions on you."),
+    F(6, "Mindless Rage", "Immune to Charmed and Frightened while raging; rage ends those conditions on you.", cond_immune=["charmed", "frightened"], needs="Raging"),
     F(10, "Retaliation", "Reaction when a creature within 5 ft damages you: one melee attack against it."),
     F(14, "Intimidating Presence", "Bonus Action: creatures of your choice in a 30-ft emanation make a Wis save (DC 8 + Str + PB) or are Frightened for 1 minute. Once per Long Rest, or spend a Rage use.",
       resource=("intimidating_presence", "Intimidating Presence", 1, LR)),
@@ -20,7 +20,11 @@ add("berserker-2024", S("barbarian", "Path of the Berserker", P24, [
 
 add("wild-heart-2024", S("barbarian", "Path of the Wild Heart", P24, [
     F(3, "Animal Speaker", "Cast Beast Sense and Speak with Animals as rituals (Wis)."),
-    F(3, "Rage of the Wilds", "When you rage, choose a power for that rage: Bear (resistance to every damage type except force, necrotic, psychic and radiant), Eagle (Disengage and Dash as one Bonus Action), or Wolf (allies have Advantage on attacks against enemies within 5 ft of you)."),
+    F(3, "Rage of the Wilds", "When you rage, choose a power for that rage (set it here for the current rage).",
+      options=[("bear", "Bear", "While raging, resistance to every damage type except force, necrotic, psychic and radiant.",
+                dict(resist=["acid", "bludgeoning", "cold", "fire", "lightning", "piercing", "poison", "slashing", "thunder"], needs="Raging")),
+               ("eagle", "Eagle", "When you rage and as a Bonus Action while raging: Disengage and Dash."),
+               ("wolf", "Wolf", "While raging, your allies have Advantage on attacks against enemies within 5 ft of you.")]),
     F(6, "Aspect of the Wilds", "Choose one after a Long Rest: Owl (Darkvision 60 ft, or +60), Panther (climb speed), or Salmon (swim speed)."),
     F(10, "Nature Speaker", "Cast Commune with Nature as a ritual."),
     F(14, "Power of the Wilds", "When you rage, choose: Falcon (fly speed), Lion (enemies within 5 ft have Disadvantage against others), or Ram (a Large or smaller creature you hit with a melee attack is knocked Prone)."),
@@ -41,8 +45,8 @@ add("zealot-2024", S("barbarian", "Path of the Zealot", P24, [
     F(6, "Fanatical Focus", "Once per active rage, reroll a failed save with a bonus equal to your Rage Damage."),
     F(10, "Zealous Presence", "Bonus Action: up to ten creatures within 60 ft have Advantage on attacks and saves until the start of your next turn. Once per Long Rest, or spend a Rage use.",
       resource=("zealous_presence", "Zealous Presence", 1, LR)),
-    F(14, "Rage of the Gods", "When you rage, for 1 minute: fly speed, resistance to necrotic, psychic and radiant, and Reaction to spend a Rage use so a creature within 30 ft dropping to 0 HP drops to HP equal to your Barbarian level. Once per Long Rest.",
-      resource=("rage_of_the_gods", "Rage of the Gods", 1, LR)),
+    F(14, "Rage of the Gods", "When you rage, for 1 minute: fly speed, resistance to necrotic, psychic and radiant, and Reaction to spend a Rage use so a creature within 30 ft dropping to 0 HP drops to HP equal to your Barbarian level. Once per Long Rest. (Add a \"Rage of the Gods\" condition in combat.)",
+      resource=("rage_of_the_gods", "Rage of the Gods", 1, LR), resist=["necrotic", "psychic", "radiant"], needs="Rage of the Gods"),
 ]))
 
 # ====================================================================== Bard
@@ -123,7 +127,7 @@ add("war-2024", S("cleric", "War Domain", P24, [
     F(3, "War Priest", "Bonus Action: a weapon attack or Unarmed Strike. Wis-modifier times per Short or Long Rest.",
       resource=("war_priest", "War Priest", "max(1, wis)", SR)),
     F(6, "War God's Blessing", "Spend Channel Divinity to cast Shield of Faith or Spiritual Weapon without a slot; it lasts 1 minute without concentration."),
-    F(17, "Avatar of Battle", "Resistance to bludgeoning, piercing and slashing damage."),
+    F(17, "Avatar of Battle", "Resistance to bludgeoning, piercing and slashing damage.", resist=["bludgeoning", "piercing", "slashing"]),
 ]))
 
 # ====================================================================== Druid
@@ -141,7 +145,7 @@ add("land-2024", S("druid", "Circle of the Land", P24, [
     F(3, "Land's Aid", "Magic action, spend a Wild Shape use: a 10-ft sphere within 60 ft: creatures of your choice make a Con save or take 2d6 necrotic (half on a success), and one creature regains 2d6 HP (2d10 at 10, 3d10 at 14)."),
     F(6, "Natural Recovery", "Once per Long Rest: cast a prepared Circle spell without a slot; and on a Short Rest recover slots totalling up to half your Druid level (rounded up), none 6th or higher.",
       resource=("natural_recovery", "Natural Recovery", 1, LR)),
-    F(10, "Nature's Ward", "Immune to Poisoned; resistance to the damage type of your current land."),
+    F(10, "Nature's Ward", "Immune to Poisoned; resistance to the damage type of your current land (add it by hand).", cond_immune=["poisoned"]),
     F(14, "Nature's Sanctuary", "Magic action, spend a Wild Shape use: a 15-ft cube of spectral trees for 1 minute; you and allies in it have half cover and your Nature's Ward resistance."),
 ]))
 
@@ -162,7 +166,8 @@ add("sea-2024", S("druid", "Circle of the Sea", P24, [
               7: ["Control Water", "Ice Storm"], 9: ["Conjure Elemental", "Hold Monster"]}),
     F(3, "Wrath of the Sea", "Bonus Action, spend a Wild Shape use: a 5-ft emanation for 10 minutes; Bonus Action: a creature in it makes a Con save or takes Wis-modifier d6 cold damage and is pushed up to 15 ft."),
     F(6, "Aquatic Affinity", "The emanation grows to 10 ft; swim speed equal to your speed."),
-    F(10, "Stormborn", "While the emanation is active: fly speed equal to your speed, and resistance to cold, lightning and thunder."),
+    F(10, "Stormborn", "While the emanation is active: fly speed equal to your speed, and resistance to cold, lightning and thunder. (Add a \"Wrath of the Sea\" condition in combat.)",
+      resist=["cold", "lightning", "thunder"], needs="Wrath of the Sea"),
     F(14, "Oceanic Gift", "You can manifest Wrath of the Sea around a willing creature within 60 ft instead (or both of you, for two uses)."),
 ]))
 
@@ -179,7 +184,8 @@ add("stars-2024", S("druid", "Circle of the Stars", P24, [
     F(6, "Cosmic Omen", "After a Long Rest, roll a die: even = Weal (Reaction: add 1d6 to a roll within 30 ft), odd = Woe (subtract 1d6). Wis-modifier times per Long Rest.",
       resource=("cosmic_omen", "Cosmic Omen", "max(1, wis)", LR)),
     F(10, "Twinkling Constellations", "Starry Form's 1d8 becomes 2d8, the Dragon grants Fly 20 ft, and you can switch constellation at the start of each turn."),
-    F(14, "Full of Stars", "In Starry Form you have resistance to bludgeoning, piercing and slashing damage."),
+    F(14, "Full of Stars", "In Starry Form you have resistance to bludgeoning, piercing and slashing damage. (Add a \"Starry Form\" condition in combat.)",
+      resist=["bludgeoning", "piercing", "slashing"], needs="Starry Form"),
 ]))
 
 # ====================================================================== Fighter
@@ -219,7 +225,7 @@ add("psi-warrior-2024", S("fighter", "Psi Warrior", P24, [
       resource=("psionic_energy", "Psionic Energy dice", PSI24, SR1),
       rider=dict(name="Psionic Strike (spend a die)", dice=[(3, "1d6+{int}"), (5, "1d8+{int}"), (11, "1d10+{int}"), (17, "1d12+{int}")], type="force", once="turn", unarmed=True)),
     F(7, "Telekinetic Adept", "Psi-Powered Leap (fly speed twice your speed this turn) and Telekinetic Thrust (Psionic Strike can knock Prone or push 10 ft, Str save)."),
-    F(10, "Guarded Mind", "Resistance to psychic damage; spend a die to end Charmed or Frightened at the start of your turn."),
+    F(10, "Guarded Mind", "Resistance to psychic damage; spend a die to end Charmed or Frightened at the start of your turn.", resist=["psychic"]),
     F(15, "Bulwark of Force", "Bonus Action: up to Int-modifier creatures within 30 ft get half cover for 1 minute. Once per Long Rest, or spend a die.",
       resource=("bulwark_of_force", "Bulwark of Force", 1, LR)),
     F(18, "Telekinetic Master", "Telekinesis always prepared; cast it once per Long Rest without a slot (or spend a die), and attack as a Bonus Action while concentrating on it.",
@@ -270,7 +276,7 @@ add("devotion-2024", S("paladin", "Oath of Devotion", P24, [
       spells={3: ["Protection from Evil and Good", "Shield of Faith"], 5: ["Aid", "Zone of Truth"], 9: ["Beacon of Hope", "Dispel Magic"],
               13: ["Freedom of Movement", "Guardian of Faith"], 17: ["Commune", "Flame Strike"]}),
     F(3, "Sacred Weapon", "Channel Divinity, 10 minutes: add your Cha modifier (minimum +1) to attack rolls with a melee weapon, which can deal radiant damage and sheds light."),
-    F(7, "Aura of Devotion", "You and allies in your Aura of Protection are immune to Charmed."),
+    F(7, "Aura of Devotion", "You and allies in your Aura of Protection are immune to Charmed.", cond_immune=["charmed"], aura=dict(name="Aura of Devotion")),
     F(15, "Smite of Protection", "When you cast Divine Smite, you and allies in your aura have half cover until the start of your next turn."),
     F(20, "Holy Nimbus", "Bonus Action, 10 minutes: enemies starting their turn in your aura take Cha + PB radiant; Advantage on saves against Fiends and Undead; bright light. Once per Long Rest, or a 5th-level slot.",
       resource=("holy_nimbus", "Holy Nimbus", 1, LR)),
@@ -294,7 +300,7 @@ add("ancients-2024", S("paladin", "Oath of the Ancients", P24, [
       spells={3: ["Ensnaring Strike", "Speak with Animals"], 5: ["Misty Step", "Moonbeam"], 9: ["Plant Growth", "Protection from Energy"],
               13: ["Ice Storm", "Stoneskin"], 17: ["Commune with Nature", "Tree Stride"]}),
     F(3, "Nature's Wrath", "Channel Divinity: creatures of your choice in a 15-ft emanation make a Str save or are Restrained for 1 minute (repeat the save each turn)."),
-    F(7, "Aura of Warding", "You and allies in your aura have resistance to necrotic, psychic and radiant damage."),
+    F(7, "Aura of Warding", "You and allies in your aura have resistance to necrotic, psychic and radiant damage.", resist=["necrotic", "psychic", "radiant"], aura=dict(name="Aura of Warding")),
     F(15, "Undying Sentinel", "When you would drop to 0 HP and not die, drop to 1 HP and regain three times your Paladin level instead. Once per Long Rest. You don't age.",
       resource=("undying_sentinel", "Undying Sentinel", 1, LR)),
     F(20, "Elder Champion", "Bonus Action, 1 minute: regain 10 HP at the start of each turn, cast 1-action Paladin spells as a Bonus Action, and enemies in your aura have Disadvantage on saves against your spells and Channel Divinity. Once per Long Rest, or a 5th-level slot.",
@@ -409,7 +415,7 @@ add("aberrant-2024", S("sorcerer", "Aberrant Sorcery", P24, [
               7: ["Evard's Black Tentacles", "Summon Aberration"], 9: ["Rary's Telepathic Bond", "Telekinesis"]}),
     F(3, "Telepathic Speech", "Bonus Action: telepathic link with a creature for Sorcerer-level minutes."),
     F(6, "Psionic Sorcery", "Cast a Psionic Spell with sorcery points equal to its level, without verbal or somatic components."),
-    F(6, "Psychic Defenses", "Resistance to psychic damage; Advantage on saves against Charmed and Frightened."),
+    F(6, "Psychic Defenses", "Resistance to psychic damage; Advantage on saves against Charmed and Frightened.", resist=["psychic"]),
     F(14, "Revelation in Flesh", "Bonus Action, spend sorcery points: see invisible, fly, swim, or squeeze, for 10 minutes."),
     F(18, "Warping Implosion", "Magic action: teleport 120 ft; creatures within 30 ft of where you were make a Str save or take 3d10 force and are pulled. Once per Long Rest, or 5 sorcery points.",
       resource=("warping_implosion", "Warping Implosion", 1, LR)),
@@ -435,7 +441,7 @@ add("draconic-2024", S("sorcerer", "Draconic Sorcery", P24, [
       spells={3: ["Alter Self", "Chromatic Orb", "Command", "Dragon's Breath"], 5: ["Fear", "Fly"], 7: ["Arcane Eye", "Charm Monster"],
               9: ["Legend Lore", "Summon Dragon"]}),
     F(6, "Elemental Affinity", "Choose acid, cold, fire, lightning or poison: resistance to it, and add your Cha modifier to one damage roll of a spell dealing that type.",
-      options=[(t, t.title(), f"Resistance to {t}; +Cha to one damage roll of {t} spells.") for t in ("acid", "cold", "fire", "lightning", "poison")]),
+      options=[(t, t.title(), f"Resistance to {t}; +Cha to one damage roll of {t} spells.", dict(resist=[t])) for t in ("acid", "cold", "fire", "lightning", "poison")]),
     F(14, "Dragon Wings", "Bonus Action: sprout wings for 1 hour, Fly Speed 60 ft; once per Long Rest unless you spend 3 Sorcery Points.",
       resource=("dragon_wings", "Dragon Wings", 1, LR)),
     F(18, "Dragon Companion", "Cast Summon Dragon without a material component, once per Long Rest without a slot; it can last 1 minute without concentration.",
@@ -472,7 +478,7 @@ add("celestial-2024", S("warlock", "Celestial Patron", P24, [
               7: ["Guardian of Faith", "Wall of Fire"], 9: ["Greater Restoration", "Summon Celestial"]}),
     F(3, "Healing Light", "A pool of d6s (1 + Warlock level): Bonus Action, heal a creature within 60 ft by spending up to Cha-modifier dice. All back on a Long Rest.",
       resource=("healing_light", "Healing Light d6s", "1 + level", LR)),
-    F(6, "Radiant Soul", "Resistance to radiant damage; once per turn add your Cha modifier to one fire or radiant damage roll of a spell."),
+    F(6, "Radiant Soul", "Resistance to radiant damage; once per turn add your Cha modifier to one fire or radiant damage roll of a spell.", resist=["radiant"]),
     F(10, "Celestial Resilience", "After a rest or Magical Cunning: temp HP equal to Warlock level + Cha for you, and half that for up to five creatures."),
     F(14, "Searing Vengeance", "When you or an ally within 60 ft makes a death save, regain half your HP maximum and stand; creatures within 30 ft take 2d8 + Cha radiant and are Blinded. Once per Long Rest.",
       resource=("searing_vengeance", "Searing Vengeance", 1, LR)),
@@ -485,7 +491,8 @@ add("fiend-2024", S("warlock", "Fiend Patron", P24, [
     F(3, "Dark One's Blessing", "When you (or someone within 10 ft) reduce an enemy to 0 HP, gain temp HP equal to Cha modifier + Warlock level."),
     F(6, "Dark One's Own Luck", "Add 1d10 to an ability check or save. Cha-modifier times per Long Rest.",
       resource=("dark_ones_luck", "Dark One's Own Luck", "max(1, cha)", LR)),
-    F(10, "Fiendish Resilience", "After a rest, choose a damage type (not force): resistance to it."),
+    F(10, "Fiendish Resilience", "After a rest, choose a damage type (not force): resistance to it.",
+      options=[(t, t.title(), f"Resistance to {t}.", dict(resist=[t])) for t in ("acid", "bludgeoning", "cold", "fire", "lightning", "necrotic", "piercing", "poison", "psychic", "radiant", "slashing", "thunder")]),
     F(14, "Hurl Through Hell", "Once per turn after a hit: the target makes a Cha save or vanishes through the lower planes and takes 8d10 psychic. Once per Long Rest, or a Pact slot.",
       resource=("hurl_through_hell", "Hurl Through Hell", 1, LR)),
 ]))
@@ -499,7 +506,7 @@ add("great-old-one-2024", S("warlock", "Great Old One Patron", P24, [
     F(6, "Clairvoyant Combatant", "When you link with Awakened Mind, the creature makes a Wis save or has Disadvantage against you and you Advantage against it for the link. Once per Short Rest, or a Pact slot.",
       resource=("clairvoyant_combatant", "Clairvoyant Combatant", 1, SR)),
     F(10, "Eldritch Hex", "Hex always prepared; its target has Disadvantage on saves of the chosen ability. Thought Shield: resistance to psychic, and reflect psychic damage.",
-      spells={10: ["Hex"]}),
+      spells={10: ["Hex"]}, resist=["psychic"]),
     F(14, "Create Thrall", "Summon Aberration gains temp HP and its attacks deal extra psychic damage."),
 ]))
 

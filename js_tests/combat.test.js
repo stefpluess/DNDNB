@@ -568,6 +568,57 @@ test('Divine Favor adds to its caster\'s weapon hits; the slot to spend is the l
   assert.deepEqual([R.pickSlot(slots, 1), R.pickSlot(slots, 3)], [1, -1]);
 });
 
+// ---------- statuses, auras, state-dependent defenses ----------
+
+test('Dodge, Reckless Attack, Help, Vex and Sap show up in attack reminders and saves, then expire', () => {
+  const a = mk({ name: 'A', init: 20 }), b = mk({ name: 'B', init: 10 });
+  const ctx = fight([a, b]);
+  R.step(ctx, 1);                                                  // A's turn
+  R.applyStatus(ctx, b, 'Vexed', a);
+  R.applyStatus(ctx, a, 'Reckless', a);
+  assert.deepEqual(R.attackHints(a, b).map(h => h.mode).sort(), ['adv', 'adv']);
+  assert.deepEqual(R.attackHints(b, a).map(h => h.mode), ['adv']);  // attacks against a reckless creature
+  R.step(ctx, 1);                                                  // B's turn
+  R.applyStatus(ctx, b, 'Dodging', b);
+  assert.deepEqual(R.saveRule(b, 'dex'), { adv: 'Dodging' });
+  assert.equal(R.rollSave({ dice: [3, 15], bonus: 0, dc: 10, rule: R.saveRule(b, 'dex') }).ok, true);
+  R.step(ctx, 1);                                                  // A's turn again: Reckless ends
+  assert.ok(!R.hasCond(a, 'Reckless'));
+  assert.ok(R.hasCond(b, 'Vexed'));                                // until the end of A's next turn
+  R.step(ctx, 1);
+  assert.ok(!R.hasCond(b, 'Vexed'));
+  assert.ok(!R.hasCond(b, 'Dodging'));
+});
+
+test('auras from a paladin: save bonus while conscious, immunities and resistances', () => {
+  const pal = mk({ name: 'Pal', kind: 'pc' }), ally = mk({ name: 'Ally', kind: 'pc' });
+  const ctx = fight([pal, ally]);
+  R.applyStatus(ctx, ally, 'Aura of Protection', pal, 3);
+  R.applyStatus(ctx, ally, 'Aura of Courage', pal);
+  R.applyStatus(ctx, ally, 'Aura of Warding', pal);
+  assert.equal(R.auraSaveBonus(ctx, ally), 3);
+  assert.match(R.addCondition(ctx, ally, 'Frightened').join(' '), /immune to Frightened/);
+  assert.equal(R.defenseMod(R.defensesOf(ally), 'necrotic'), 'resist');
+  R.addCondition(ctx, pal, 'Stunned');                             // an incapacitated paladin's aura stops
+  assert.equal(R.auraSaveBonus(ctx, ally), 0);
+});
+
+test('state-dependent defenses and AC from a character sheet; Danger Sense', () => {
+  const barb = mk({ name: 'Barb', kind: 'pc', ac: 14, cdef: [{ needs: 'Raging', resist: ['fire'], condImmune: ['charmed'] }], dexSaveAdv: 'Danger Sense' });
+  const blade = mk({ name: 'Blade', kind: 'pc', ac: 13, acCond: [{ needs: 'Bladesong', ac: 4 }] });
+  const ctx = fight([barb, blade]);
+  assert.equal(R.defenseMod(R.defensesOf(barb), 'fire'), 'normal');
+  R.addCondition(ctx, barb, 'Raging');
+  assert.deepEqual([R.defenseMod(R.defensesOf(barb), 'fire'), R.defenseMod(R.defensesOf(barb), 'slashing')], ['resist', 'resist']);
+  assert.deepEqual(R.saveRule(barb, 'dex'), { adv: 'Danger Sense' });
+  R.addCondition(ctx, barb, 'Incapacitated');
+  assert.deepEqual(R.saveRule(barb, 'dex'), {});
+  assert.equal(R.acOf(ctx, blade), 13);
+  R.addCondition(ctx, blade, 'Bladesong');
+  assert.equal(R.acOf(ctx, blade), 17);
+  assert.equal(R.COVER.three_quarters, 5);
+});
+
 // ---------- names ----------
 
 test('group names number creatures and never repeat a number', () => {

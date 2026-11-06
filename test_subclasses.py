@@ -224,6 +224,20 @@ class OnTheSheet(unittest.TestCase):
         w["choices"] = {"Eldritch Invocations": "blade"}
         self.assertEqual(rules.derive(w)["attacks"][0]["ability"], "cha")
 
+    def test_feature_defenses_and_auras_on_the_sheet(self):
+        b = char("barbarian", 3, "totem-warrior-2014")
+        b["choices"] = {"Totem Spirit": "bear"}
+        d = rules.derive(b)
+        self.assertEqual((d["cdef"][0]["needs"], "psychic" in d["cdef"][0]["resist"], "fire" in d["cdef"][0]["resist"]), ("Raging", False, True))
+        self.assertEqual(d["dex_save_adv"], "Danger Sense")
+        w = rules.derive(char("cleric", 17, "war-2024"))
+        self.assertEqual(w["defenses"]["resist"], ["bludgeoning", "piercing", "slashing"])
+        p = rules.derive(char("paladin", 10, "devotion-2024", cha=16))
+        self.assertEqual([(a["name"], a["v"]) for a in p["auras"]], [("Aura of Protection", 3), ("Aura of Courage", None), ("Aura of Devotion", None)])
+        self.assertEqual(sorted(p["defenses"]["condImmune"]), ["charmed", "frightened"])
+        bs = rules.derive(char("wizard", 2, "bladesinging-tce", int=18))
+        self.assertEqual(bs["ac_cond"][0]["ac"], 4)
+
     def test_wrong_class_or_level_warns(self):
         self.assertTrue([w for w in rules.derive(char("wizard", 5, "champion-2024"))["warnings"] if "Fighter subclass" in w])
         self.assertTrue([w for w in rules.derive(char("fighter", 2, "champion-2024"))["warnings"] if "starts at" in w])

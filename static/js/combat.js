@@ -365,10 +365,15 @@ export function monsterDefenses(m) {
  */
 export function defensesOf(c) {
   const d = c.def || { resist: [], vuln: [], immune: [], condImmune: [] };
-  const add = (list, xs) => [...new Set([...list, ...xs])];
+  const add = (list, xs) => [...new Set([...list, ...(xs || [])])];
+  const merge = (o, g) => ({ resist: add(o.resist, g.resist), vuln: add(o.vuln, g.vuln), immune: add(o.immune, g.immune), condImmune: add(o.condImmune, g.condImmune), ...(o.notes ? { notes: o.notes } : {}) });
   let out = d;
-  if (hasCond(c, 'Raging')) out = { ...out, resist: add(out.resist, ['bludgeoning', 'piercing', 'slashing']) };
-  if (hasCond(c, 'Petrified')) out = { ...out, resist: add(out.resist, DAMAGE_TYPES), immune: add(out.immune, ['poison']), condImmune: add(out.condImmune, ['poisoned']) };
+  if (hasCond(c, 'Raging')) out = merge(out, { resist: ['bludgeoning', 'piercing', 'slashing'] });
+  if (hasCond(c, 'Petrified')) out = merge(out, { resist: DAMAGE_TYPES, immune: ['poison'], condImmune: ['poisoned'] });
+  // a character's features that need a state (Bear totem while Raging, Superior Defense...), from its sheet
+  for (const g of c.cdef || []) if (hasCond(c, g.needs)) out = merge(out, g);
+  // auras from allies (Aura of Courage, Aura of Devotion, Aura of Warding)
+  for (const x of c.conds) if (STATUS[x.n]?.def) out = merge(out, STATUS[x.n].def);
   return out === d && !c.def ? null : out;
 }
 
@@ -390,14 +395,24 @@ export function saveRule(c, ab) {
     const x = c.conds.find(k => AUTO_FAIL_STR_DEX.includes(k.n));
     if (x) return { fail: x.n };
   }
-  if (ab === 'dex' && hasCond(c, 'Restrained')) return { dis: 'Restrained' };
-  return {};
+  const dis = ab === 'dex' && hasCond(c, 'Restrained') ? 'Restrained' : null;
+  const adv = ab === 'dex' ? c.conds.find(x => ['Dodging', 'Hasted'].includes(x.n))?.n
+    || (c.dexSaveAdv && !c.conds.some(x => INCAPACITATING.includes(x.n)) ? c.dexSaveAdv : null) : null;   // Danger Sense
+  if (dis && adv) return {};                                          // Advantage and Disadvantage cancel
+  return dis ? { dis } : adv ? { adv } : {};
+}
+
+/** Bonus to saves from allies' auras (Aura of Protection: the highest one counts). */
+export function auraSaveBonus(ctx, c) {
+  // an aura works only while its paladin is conscious and not Incapacitated
+  const live = x => { const p = ctx.enc.c.find(o => o.id === x.src); return p && hp(ctx, p) > 0 && !p.conds.some(k => INCAPACITATING.includes(k.n)); };
+  return Math.max(0, ...c.conds.filter(x => x.n === 'Aura of Protection' && live(x)).map(x => +x.v || 0));
 }
 
 /** Resolve a save: `dice` are d20 rolls (two for Disadvantage, the lower counts). Returns { die, total, ok, auto }. */
 export function rollSave({ dice, bonus, dc, rule = {}, extra = 0 }) {
   if (rule.fail) return { die: null, total: null, ok: false, auto: rule.fail };
-  const die = rule.dis ? Math.min(...dice) : dice[0];
+  const die = rule.dis ? Math.min(...dice) : rule.adv ? Math.max(...dice) : dice[0];
   const total = die + bonus + extra;                                  // extra: Bless / Bane dice already rolled
   return { die, total, ok: total >= dc, auto: null };
 }
@@ -482,12 +497,18 @@ const TARGET_ADV = { Blinded: 'Blinded', Paralyzed: 'Paralyzed', Petrified: 'Pet
 export function attackHints(atk, tgt) {
   const out = [];
   for (const x of tgt.conds) {
+    if (x.n === 'Dodging') out.push({ text: 'Dodging target: attacks have Disadvantage (if it can see you)', mode: 'dis' });
+    if (x.n === 'Reckless') out.push({ text: 'Reckless target: attacks against it have Advantage', mode: 'adv' });
+    if (x.n === 'Vexed' && x.src === atk.id) out.push({ text: 'Vex: your next attack against it has Advantage', mode: 'adv' });
     if (TARGET_ADV[x.n]) out.push({ text: `${x.n} target: attacks have Advantage`, mode: 'adv' });
     if (x.n === 'Paralyzed' || x.n === 'Unconscious') out.push({ text: `${x.n} target: a hit from within 5 ft is a critical hit`, mode: null });
     if (x.n === 'Prone') out.push({ text: 'Prone target: Advantage within 5 ft, Disadvantage farther away', mode: null });
     if (x.n === 'Invisible') out.push({ text: 'Invisible target: attacks have Disadvantage', mode: 'dis' });
   }
   for (const x of atk.conds) {
+    if (x.n === 'Helped') out.push({ text: 'Helped: Advantage on its next attack', mode: 'adv' });
+    if (x.n === 'Reckless') out.push({ text: 'Reckless Attack: Advantage on Strength attacks this turn', mode: 'adv' });
+    if (x.n === 'Sapped') out.push({ text: 'Sapped: Disadvantage on its next attack', mode: 'dis' });
     if (x.n === 'Grappled' && x.src !== tgt.id) out.push({ text: `Grappled attacker: Disadvantage against anyone but the grappler`, mode: 'dis' });
     if (x.n === 'Charmed' && x.src === tgt.id) out.push({ text: 'Charmed attacker: it can\'t attack the creature that charmed it', mode: null });
     if (['Blinded', 'Poisoned', 'Restrained', 'Prone'].includes(x.n)) out.push({ text: `${x.n} attacker: Disadvantage`, mode: 'dis' });
@@ -688,6 +709,37 @@ export function toggleSlot(slot, p) {
   else slot.used = Math.max(0, slot.used - 1);
 }
 
+// ---------- statuses: short effects of actions and features ----------
+//
+// Each lasts until a turn boundary of its source (the creature that caused it): until: 'start' or 'end' of
+// that creature's next turn. def: defenses an aura grants. Applied with applyStatus().
+
+export const STATUS = {
+  Dodging: { until: 'start', self: true, text: 'Attacks against it have Disadvantage; Advantage on Dex saves.' },
+  Reckless: { until: 'start', self: true, text: 'Advantage on Strength attacks; attacks against it have Advantage.' },
+  Helped: { until: 'start', text: 'Advantage on its next attack roll (or check) before the helper\'s next turn.' },
+  Vexed: { until: 'end', text: "The attacker's next attack against it has Advantage." },
+  Sapped: { until: 'start', text: 'Disadvantage on its next attack roll.' },
+  Slowed: { until: 'start', text: 'Speed −10 ft.' },
+  'Aura of Protection': { aura: true, text: "Adds the paladin's Cha modifier to its saves." },
+  'Aura of Courage': { aura: true, def: { condImmune: ['frightened'] }, text: 'Immune to Frightened.' },
+  'Aura of Devotion': { aura: true, def: { condImmune: ['charmed'] }, text: 'Immune to Charmed.' },
+  'Aura of Warding': { aura: true, def: { resist: ['necrotic', 'psychic', 'radiant'] }, text: 'Resistance to necrotic, psychic and radiant damage.' },
+};
+export const COVER = { none: 0, half: 2, three_quarters: 5 };
+
+/** Put a status on `c`, caused by `src` (itself for Dodge and Reckless Attack). `v`: a value it carries (aura bonus). */
+export function applyStatus(ctx, c, name, src, v) {
+  const st = STATUS[name];
+  if (st.aura) {
+    const msgs = addCondition(ctx, c, name, null, {});
+    const x = c.conds.find(k => k.n === name);
+    if (x) { x.src = src.id; if (v != null) x.v = v; }
+    return msgs;
+  }
+  return addCondition(ctx, c, name, 1, { src: src.id, at: st.until });
+}
+
 // ---------- spell effects: conditions that carry rules ----------
 //
 // Casting one of these puts a condition on its target (tied to the caster's concentration when the spell
@@ -712,7 +764,8 @@ Object.assign(EFFECT_BY_COND, { Hexed: EFFECT_BY_COND.Hex, Marked: EFFECT_BY_CON
 
 /** AC right now: the base AC plus what effects on the creature add. */
 export function acOf(ctx, c) {
-  return vit(ctx, c).ac + c.conds.reduce((n, x) => n + (EFFECT_BY_COND[x.n]?.ac || 0), 0);
+  return vit(ctx, c).ac + c.conds.reduce((n, x) => n + (EFFECT_BY_COND[x.n]?.ac || 0), 0)
+    + (c.acCond || []).reduce((n, g) => n + (hasCond(c, g.needs) ? g.ac : 0), 0);     // Bladesong and the like
 }
 
 /** Dice a creature's own effects add to its attack rolls and saves: ['1d4'] for Bless, ['-1d4'] for Bane. */

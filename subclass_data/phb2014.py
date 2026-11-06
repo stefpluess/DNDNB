@@ -16,7 +16,7 @@ def school(key, name, savant, features):
 
 add("berserker-2014", S("barbarian", "Path of the Berserker", P14, [
     F(3, "Frenzy", "When you rage you can frenzy: for the rage, make one melee weapon attack as a Bonus Action on each of your turns; you gain a level of Exhaustion when the rage ends."),
-    F(6, "Mindless Rage", "You can't be Charmed or Frightened while raging (they're suspended if already on you)."),
+    F(6, "Mindless Rage", "You can't be Charmed or Frightened while raging (they're suspended if already on you).", cond_immune=["charmed", "frightened"], needs="Raging"),
     F(10, "Intimidating Presence", "Action: a creature within 30 ft makes a Wis save (DC 8 + PB + Cha) or is Frightened until the end of your next turn; extend it each turn with your action."),
     F(14, "Retaliation", "Reaction when a creature within 5 ft damages you: one melee weapon attack against it."),
 ]))
@@ -24,7 +24,8 @@ add("berserker-2014", S("barbarian", "Path of the Berserker", P14, [
 add("totem-warrior-2014", S("barbarian", "Path of the Totem Warrior", P14, [
     F(3, "Spirit Seeker", "Cast Beast Sense and Speak with Animals as rituals."),
     F(3, "Totem Spirit", "Choose a totem animal; its benefit applies while you rage.",
-      options=[("bear", "Bear", "While raging, resistance to all damage except psychic."),
+      options=[("bear", "Bear", "While raging, resistance to all damage except psychic.",
+                dict(resist=["acid", "bludgeoning", "cold", "fire", "force", "lightning", "necrotic", "piercing", "poison", "radiant", "slashing", "thunder"], needs="Raging")),
                ("eagle", "Eagle", "While raging (without heavy armor), other creatures have Disadvantage on Opportunity Attacks against you, and you can Dash as a Bonus Action."),
                ("wolf", "Wolf", "While raging, your friends have Advantage on melee attacks against hostile creatures within 5 ft of you.")]),
     F(6, "Aspect of the Beast", "Bear: double carrying capacity, Advantage on Str checks to push, pull, lift or break. Eagle: see a mile clearly, dim light doesn't hinder Perception. Wolf: track at a fast pace, move stealthily at a normal pace."),
@@ -158,7 +159,7 @@ add("land-2014", S("druid", "Circle of the Land", P14, [
     F(3, "Circle Spells", "Choose your land; its spells are always prepared.",
       options=[(k, n, f"Always prepared: {', '.join(x for lv in sp.values() for x in lv)}.", dict(spells=sp)) for k, (n, sp) in LAND14.items()]),
     F(6, "Land's Stride", "Nonmagical difficult terrain costs no extra movement and plants don't hurt you; Advantage on saves against magically manipulated plants."),
-    F(10, "Nature's Ward", "Can't be Charmed or Frightened by elementals or fey; immune to poison and disease."),
+    F(10, "Nature's Ward", "Can't be Charmed or Frightened by elementals or fey; immune to poison and disease.", immune=["poison"], cond_immune=["poisoned"]),
     F(14, "Nature's Sanctuary", "Beasts and plants attacking you must make a Wis save or choose another target."),
 ], level=2))
 
@@ -232,7 +233,7 @@ add("devotion-2014", S("paladin", "Oath of Devotion", P14, [
       spells={3: ["Protection from Evil and Good", "Sanctuary"], 5: ["Lesser Restoration", "Zone of Truth"], 9: ["Beacon of Hope", "Dispel Magic"],
               13: ["Freedom of Movement", "Guardian of Faith"], 17: ["Commune", "Flame Strike"]}),
     F(3, "Channel Divinity", "Sacred Weapon: 1 minute, add your Cha modifier (minimum +1) to attack rolls with a weapon, which sheds light. Turn the Unholy: fiends and undead within 30 ft make a Wis save or are Turned."),
-    F(7, "Aura of Devotion", "You and friendly creatures within 10 ft (30 ft at 18) can't be Charmed while you're conscious."),
+    F(7, "Aura of Devotion", "You and friendly creatures within 10 ft (30 ft at 18) can't be Charmed while you're conscious.", cond_immune=["charmed"], aura=dict(name="Aura of Devotion")),
     F(15, "Purity of Spirit", "You are always under the effect of Protection from Evil and Good."),
     F(20, "Holy Nimbus", "Action, 1 minute: bright light 30 ft; enemies starting their turn in it take 10 radiant; Advantage on saves against fiends' and undeads' spells. Once per Long Rest.",
       resource=("holy_nimbus", "Holy Nimbus", 1, LR)),
@@ -367,7 +368,7 @@ add("great-old-one-2014", S("warlock", "The Great Old One", P14, [
     F(1, "Awakened Mind", "Speak telepathically to a creature within 30 ft."),
     F(6, "Entropic Ward", "Reaction when attacked: Disadvantage on the roll; if it misses, Advantage on your next attack against it. Once per Short Rest.",
       resource=("entropic_ward", "Entropic Ward", 1, SR)),
-    F(10, "Thought Shield", "Your thoughts can't be read; resistance to psychic damage, and a creature dealing it to you takes the same."),
+    F(10, "Thought Shield", "Your thoughts can't be read; resistance to psychic damage, and a creature dealing it to you takes the same.", resist=["psychic"]),
     F(14, "Create Thrall", "Action: touch an incapacitated humanoid to charm it until Remove Curse; telepathic contact on the same plane."),
 ], level=1))
 
@@ -418,7 +419,7 @@ school("illusion-2014", "School of Illusion", "Illusion", [
 school("necromancy-2014", "School of Necromancy", "Necromancy", [
     F(2, "Grim Harvest", "Once per turn when your spell kills a creature, regain HP equal to twice the spell's level (three times for necromancy)."),
     F(6, "Undead Thralls", "Animate Dead raises one more creature, and your undead get + Wizard level HP and + PB to damage."),
-    F(10, "Inured to Undeath", "Resistance to necrotic damage; your HP maximum can't be reduced."),
+    F(10, "Inured to Undeath", "Resistance to necrotic damage; your HP maximum can't be reduced.", resist=["necrotic"]),
     F(14, "Command Undead", "Action: an undead within 60 ft makes a Cha save or obeys you."),
 ])
 school("transmutation-2014", "School of Transmutation", "Transmutation", [
