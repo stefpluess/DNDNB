@@ -76,7 +76,9 @@ Front end, `static/js/` (plain ES modules, no framework):
   (−2 per level to d20 Tests, −5 ft speed, 6 = death), concentration DC capped at 30,
   death saves (nat 20 = 1 HP, nat 1 = two failures, crit at 0 HP = two failures),
   monster initiative from the stat block, damage order (half on a save, then resistance, then
-  vulnerability), condition timers that count down on another creature's turn.
+  vulnerability), condition timers that count down on another creature's turn, reactions and legendary actions
+  regained at the start of the creature's turn, Recharge rolled (d6) at the start of its turn,
+  Legendary Resistance per day (never resets mid-fight).
 
 ## Next steps, in order
 1. Run `python import_srd.py` on the live data and fix whatever the sanity check reports.

@@ -6,7 +6,9 @@
 // They change the encounter (and linked sheets) in place and return messages to show the DM.
 //
 // A combatant: { id, name, kind: 'pc'|'foe'|'ally', init, mod, seq, ac, hp, max, temp, exh,
-//                conds: [{ n, d, src?, at?, fresh? }], slots: [{max, used}], ds: { s, f }, ref?, charId?, notes }
+//                conds: [{ n, d, src?, at?, fresh? }], slots: [{max, used}], ds: { s, f }, ref?, charId?, notes,
+//                rx (reaction used), res?: monster resources, see monsterResources() }
+// ctx.rand (optional) replaces Math.random for recharge rolls in tests.
 
 // ---------- reading a combatant (PCs read HP, AC, slots and Exhaustion from their sheet) ----------
 
@@ -79,10 +81,19 @@ export function tick(ctx, who, at) {
 /** Kept for callers that only tick a creature's own conditions at the end of its turn. */
 export const tickEnd = (ctx, c) => tick(ctx, c, 'end');
 
+const clone = x => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)));
+/** Everything a turn change can touch: who's up, who acted, condition timers, reactions and monster resources. */
 const snapshot = enc => ({
   id: enc.active, round: enc.round, acted: [...actedIds(enc)],
-  conds: Object.fromEntries(enc.c.map(c => [c.id, JSON.parse(JSON.stringify(c.conds))])),
+  cs: Object.fromEntries(enc.c.map(c => [c.id, { conds: clone(c.conds), rx: !!c.rx, res: clone(c.res) }])),
 });
+function restoreSnapshot(enc, snap) {
+  for (const c of enc.c) {
+    const s = snap.cs?.[c.id];
+    if (s) { c.conds = s.conds; c.rx = s.rx; if (s.res !== undefined) c.res = s.res; }
+    else if (snap.conds?.[c.id]) c.conds = snap.conds[c.id];          // snapshots saved before resources existed
+  }
+}
 
 function dyingNote(ctx) {
   const cur = ctx.enc.c.find(c => c.id === ctx.enc.active);
@@ -107,7 +118,8 @@ export function step(ctx, dir) {
     enc.acted = [];
     enc.ticks = [];
     enc.active = (nextUp(ctx, []) || L[0]).id;
-    msgs.push(...tick(ctx, enc.c.find(c => c.id === enc.active), 'start'));
+    const first = enc.c.find(c => c.id === enc.active);
+    msgs.push(...startTurn(ctx, first), ...tick(ctx, first, 'start'));
     return [...msgs, ...dyingNote(ctx)];
   }
   if (dir > 0) {
@@ -120,7 +132,7 @@ export function step(ctx, dir) {
     if (nx) enc.acted = acted;
     else { enc.round++; enc.acted = []; nx = nextUp(ctx, []) || cur; }
     enc.active = nx.id;
-    msgs.push(...tick(ctx, nx, 'start'));
+    msgs.push(...startTurn(ctx, nx), ...tick(ctx, nx, 'start'));
     return [...msgs, ...dyingNote(ctx)];
   }
   // back
@@ -130,7 +142,7 @@ export function step(ctx, dir) {
     enc.active = snap.id;
     enc.round = snap.round;
     enc.acted = snap.acted.filter(id => enc.c.some(c => c.id === id));
-    for (const c of enc.c) if (snap.conds[c.id]) c.conds = snap.conds[c.id];
+    restoreSnapshot(enc, snap);
   } else {
     // no history (an older save): step back in initiative order without touching timers
     let i = L.findIndex(c => c.id === enc.active);
@@ -304,6 +316,67 @@ export function deathSave(ctx, c, die) {
   const msgs = c.ds.s >= 3 ? [`${name} is stable.`] : c.ds.f >= 3 ? [`${name} has died.`]
     : die === 20 ? [`${name} is back up with 1 HP.`] : [`Death save: ${outcome}.`];
   return { total, outcome, pen, msgs, cls: die === 20 ? 'crit' : die === 1 ? 'fumble' : '' };
+}
+
+// ---------- reactions and monster resources ----------
+//
+// c.res = { leg: { max, used } | null,        legendary actions, regained at the start of the monster's turn
+//           lr:  { max, used } | null,        Legendary Resistance (per day: never resets during a fight)
+//           uses: [{ name, kind: 'recharge', p, used: 0|1 } | { name, kind: 'day', max, used }] }
+
+const allText = m => [m.legendary_desc, m.desc, ...(m.traits || []).map(t => `${t.name} ${t.desc}`),
+  ...(m.actions || []).map(a => `${a.name} ${a.desc}`)].filter(Boolean).join('\n');
+
+/** Read legendary actions, Legendary Resistance and limited-use abilities from a monster (SRD or homebrew). */
+export function monsterResources(m) {
+  const text = allText(m);
+  const actions = m.actions || [];
+  let leg = null;
+  if (actions.some(a => a.action_type === 'LEGENDARY_ACTION')) {
+    const n = +(m.legendary_actions ?? m.legendary_action_uses ?? 0)
+      || +((text.match(/Legendary Action Uses:?\**\s*(\d+)/i) || text.match(/can take (\d+) legendary actions/i) || [])[1] || 0) || 3;
+    leg = { max: n, used: 0 };
+  }
+  let lr = null;
+  const uses = [];
+  for (const f of [...(m.traits || []), ...actions]) {
+    const u = f.usage_limits || {};
+    const t = String(u.type || '').toUpperCase();
+    if (/^Legendary Resistance/i.test(f.name || '')) {
+      const n = (t.startsWith('PER_DAY') && +u.param) || +((`${f.name} ${f.desc || ''}`.match(/(\d+)\s*\/\s*Day/i) || [])[1] || 0) || 3;
+      lr = { max: n, used: 0 };
+    } else if (t.startsWith('RECHARGE_ON_ROLL')) uses.push({ name: f.name, kind: 'recharge', p: +u.param || 6, used: 0 });
+    else if (t.startsWith('PER_DAY')) uses.push({ name: f.name, kind: 'day', max: +u.param || 1, used: 0 });
+  }
+  return leg || lr || uses.length ? { leg, lr, uses } : null;
+}
+
+/**
+ * The start of a creature's turn: it regains its reaction and its legendary actions, and rolls a d6 for
+ * every spent Recharge ability (it's ready again on a roll of its number or higher).
+ */
+export function startTurn(ctx, c) {
+  const msgs = [];
+  c.rx = false;
+  if (!c.res) return msgs;
+  if (c.res.leg) c.res.leg.used = 0;
+  for (const u of c.res.uses || []) if (u.kind === 'recharge' && u.used) msgs.push(rollRecharge(ctx, c, u).msg);
+  return msgs;
+}
+
+/** Roll a d6 for a spent Recharge ability. Returns { die, ok, msg }. */
+export function rollRecharge(ctx, c, u) {
+  const die = 1 + Math.floor((ctx.rand || Math.random)() * 6);
+  const ok = die >= u.p;
+  if (ok) u.used = 0;
+  const msg = ok ? `${nameOf(ctx, c)}: ${u.name} recharged (rolled ${die}).`
+    : `${nameOf(ctx, c)}: ${u.name} not recharged (rolled ${die}, needs ${u.p}${u.p < 6 ? '–6' : ''}).`;
+  return { die, ok, msg };
+}
+
+/** Spend or restore one use from a { max, used } pool (legendary actions, Legendary Resistance, x/Day). */
+export function spend(pool, delta = 1) {
+  pool.used = Math.max(0, Math.min(pool.max, pool.used + delta));
 }
 
 // ---------- conditions ----------

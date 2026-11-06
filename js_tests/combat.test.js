@@ -246,6 +246,66 @@ test("removing a timer's source moves the timer to its bearer's own turn", () =>
   assert.deepEqual(orc.conds, [{ n: 'Frightened', d: 2 }]);
 });
 
+// ---------- reactions and monster resources ----------
+
+const DRAGON = {
+  name: 'Adult Red Dragon',
+  traits: [{ name: 'Legendary Resistance (3/Day, or 4/Day in Lair)', desc: 'If the dragon fails a saving throw, it can choose to succeed instead.',
+    usage_limits: { type: 'PER_DAY', param: 3 } }],
+  actions: [
+    { name: 'Fire Breath', action_type: 'ACTION', desc: 'Dexterity Saving Throw: DC 21.', usage_limits: { type: 'RECHARGE_ON_ROLL', param: 5 } },
+    { name: 'Scorching Ray', action_type: 'ACTION', desc: '', usage_limits: { type: 'PER_DAY', param: 1 } },
+    { name: 'Pounce', action_type: 'LEGENDARY_ACTION', desc: '' },
+  ],
+  legendary_desc: 'Legendary Action Uses: 3 (4 in Lair). Immediately after another creature\'s turn, the dragon can expend a use.',
+};
+
+test('monster resources come from the stat block', () => {
+  assert.deepEqual(R.monsterResources(DRAGON), {
+    leg: { max: 3, used: 0 }, lr: { max: 3, used: 0 },
+    uses: [{ name: 'Fire Breath', kind: 'recharge', p: 5, used: 0 }, { name: 'Scorching Ray', kind: 'day', max: 1, used: 0 }],
+  });
+  assert.equal(R.monsterResources({ name: 'Goblin', actions: [{ name: 'Scimitar', action_type: 'ACTION' }] }), null);
+  // no count in the text: the usual 3
+  assert.deepEqual(R.monsterResources({ actions: [{ name: 'Swipe', action_type: 'LEGENDARY_ACTION' }] }).leg, { max: 3, used: 0 });
+});
+
+test('the start of a turn restores the reaction and legendary actions, and rolls recharges', () => {
+  const d = mk({ name: 'Dragon', init: 20, res: R.monsterResources(DRAGON), rx: true });
+  const pc = mk({ name: 'PC', kind: 'pc', init: 10, rx: true });
+  const ctx = fight([d, pc]);
+  let rolls = [];
+  ctx.rand = () => (rolls.shift() - 1) / 6;
+  R.step(ctx, 1);                                     // the Dragon's turn
+  assert.equal(d.rx, false);
+  assert.equal(pc.rx, true);                          // not the PC's turn yet
+  d.res.uses[0].used = 1;                             // breathes
+  R.spend(d.res.leg); R.spend(d.res.leg);
+  R.spend(d.res.lr);
+  R.step(ctx, 1);                                     // the PC's turn
+  assert.equal(pc.rx, false);
+  assert.equal(d.res.leg.used, 2);                    // legendary actions come back on the dragon's own turn
+  rolls = [4];
+  let msgs = R.step(ctx, 1);                          // round 2, the Dragon: rolls a 4, needs 5
+  assert.match(msgs.join(' '), /Fire Breath not recharged \(rolled 4, needs 5–6\)/);
+  assert.deepEqual([d.res.leg.used, d.res.uses[0].used, d.res.lr.used], [0, 1, 1]);
+  R.step(ctx, 1);
+  rolls = [5];
+  msgs = R.step(ctx, 1);
+  assert.match(msgs.join(' '), /Fire Breath recharged/);
+  assert.equal(d.res.uses[0].used, 0);
+  R.step(ctx, -1);                                    // Back undoes the recharge
+  assert.equal(d.res.uses[0].used, 1);
+});
+
+test('spending uses stays within the pool', () => {
+  const pool = { max: 3, used: 2 };
+  R.spend(pool); R.spend(pool);
+  assert.equal(pool.used, 3);
+  R.spend(pool, -5);
+  assert.equal(pool.used, 0);
+});
+
 // ---------- names ----------
 
 test('group names number creatures and never repeat a number', () => {

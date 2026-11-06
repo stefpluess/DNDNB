@@ -99,15 +99,41 @@ function chipsHtml(c) {
   return c.conds.length || exh ? `<div class="chips">${exhChip}${c.conds.map(chipHtml).join('')}</div>` : '';
 }
 
+/** Pips for a { max, used } pool: available ones first, spent ones hollow. Clicking spends or restores one. */
+const pipsHtml = (pool, a, what, extra = '') => `<span class="pips">${Array.from({ length: pool.max }, (_, p) =>
+  `<button class="pip ${p >= pool.max - pool.used ? 'spent' : ''}" data-a="${a}" data-p="${p}"${extra} aria-label="${what} ${p + 1}"></button>`).join('')}</span>`;
+
+function resourcesHtml(c) {
+  const r = c.res;
+  const rxLine = `<div class="resline"><span>Reaction</span><button class="btn sm ${c.rx ? '' : 'ok'}" data-a="rx">${c.rx ? 'Used' : 'Available'}</button>
+    <span class="hint">Comes back at the start of its turn.</span></div>`;
+  if (!r) return `<div class="blk"><h4>Turn resources</h4>${rxLine}</div>`;
+  const maxField = (path, v, label) => `<label class="hint">of <input class="field tiny" type="number" min="0" max="9" data-path="${path}" data-type="num" value="${v}" aria-label="${label}"></label>`;
+  const lines = [rxLine];
+  if (r.leg) lines.push(`<div class="resline"><span>Legendary actions</span>${pipsHtml(r.leg, 'leg', 'Legendary action')}${maxField('res.leg.max', r.leg.max, 'Legendary actions per round')}
+    <span class="hint">Back each turn. One after another creature's turn.</span></div>`);
+  if (r.lr) lines.push(`<div class="resline"><span>Legendary Resistance</span>${pipsHtml(r.lr, 'lr', 'Legendary Resistance')}${maxField('res.lr.max', r.lr.max, 'Legendary Resistance per day')}
+    <span class="hint">Per day: turn a failed save into a success.</span></div>`);
+  r.uses.forEach((u, i) => lines.push(u.kind === 'recharge'
+    ? `<div class="resline"><span>${esc(u.name)} <small class="hint">Recharge ${u.p}${u.p < 6 ? '–6' : ''}</small></span>
+        <button class="btn sm ${u.used ? 'bad' : 'ok'}" data-a="use" data-i="${i}" title="Click to mark ${u.used ? 'ready' : 'used'}">${u.used ? 'Spent' : 'Ready'}</button>
+        ${u.used ? `<button class="btn sm" data-a="recharge" data-i="${i}" title="Roll a d6 now">Roll recharge</button>` : '<span class="hint">Rolls a d6 at the start of its turn once spent.</span>'}</div>`
+    : `<div class="resline"><span>${esc(u.name)} <small class="hint">${u.max}/Day</small></span>${pipsHtml(u, 'day', u.name, ` data-i="${i}"`)}</div>`));
+  return `<div class="blk"><h4>Turn resources</h4>${lines.join('')}</div>`;
+}
+
 function rowHtml(c) {
   const v = R.vit(ctx, c), hp = R.hp(ctx, c), max = R.maxHp(ctx, c), temp = R.tempHp(ctx, c);
   const turn = R.turnState(S.enc, c);
   const classes = [`cb k-${c.kind}`, c.id === S.enc.active && 'is-active', turn === 'done' && 'is-done', S.sel?.type === 'c' && S.sel.id === c.id && 'sel', hp <= 0 && 'is-down'].filter(Boolean).join(' ');
   const tag = hp <= 0 ? (c.kind === 'pc' ? 'Dying' : 'Down') : KIND[c.kind];
   const turnTag = turn === 'now' ? '<span class="turn now">Their turn</span>' : turn === 'done' ? '<span class="turn done" title="Already acted this round, or joined after its initiative had passed">✓ Acted</span>' : '';
+  const rx = `<button class="rx ${c.rx ? 'used' : ''}" data-a="rx" title="Reaction ${c.rx ? 'used (comes back at the start of its turn)' : 'available'}. Click to toggle." aria-label="Reaction ${c.rx ? 'used' : 'available'}">Reaction</button>`;
+  const leg = c.res?.leg ? `<span class="legmini" title="Legendary actions left this round"><small>Legendary</small>${pipsHtml(c.res.leg, 'leg', 'Legendary action')}</span>` : '';
+  const spent = (c.res?.uses || []).filter(u => u.kind === 'recharge' && u.used).map(u => `<span class="spent" title="Rolls to recharge at the start of its turn">${esc(u.name)} spent</span>`).join('');
   return `<div class="${classes}" data-id="${c.id}">
     <input class="field init" type="number" id="init-${c.id}" data-f="init" value="${c.init}" aria-label="Initiative for ${esc(v.name)}">
-    <div class="who"><div class="top-line"><input type="checkbox" class="pick" data-pick${S.targets.has(c.id) ? ' checked' : ''} aria-label="Target ${esc(v.name)}" title="Tick to include in area damage"><span class="nm">${esc(v.name)}</span>${turnTag}<span class="tag">${tag}</span></div>${chipsHtml(c)}</div>
+    <div class="who"><div class="top-line"><input type="checkbox" class="pick" data-pick${S.targets.has(c.id) ? ' checked' : ''} aria-label="Target ${esc(v.name)}" title="Tick to include in area damage"><span class="nm">${esc(v.name)}</span>${turnTag}<span class="tag">${tag}</span></div><div class="resrow">${rx}${leg}${spent}</div>${chipsHtml(c)}</div>
     <span class="ac" title="Armor Class"><b>${v.ac}</b><small>AC</small></span>
     <div class="hp ${hpState(c)}"><div class="meter"><i style="width:${Math.max(0, Math.min(100, hp / max * 100))}%"></i>${temp ? `<em style="width:${Math.min(100, temp / max * 100)}%"></em>` : ''}</div>
       <span class="num">${hp}<small>/${max}</small>${temp ? ` <span class="tmp">+${temp}</span>` : ''}</span></div>
@@ -233,6 +259,11 @@ export async function renderInspector() {
       const [kind, idx] = c.ref.split(':');
       try {
         const m = await getEntry(kind, idx);
+        if (kind === 'monster' && c.res === undefined) {          // added before turn resources existed
+          c.res = R.monsterResources(m);
+          saveEnc(); renderTracker();
+          if (S.sel?.id === c.id) return renderInspector();
+        }
         if (S.sel?.id === c.id) $('#sbHost').innerHTML = statBlock(m);
       } catch (e) { const host = $('#sbHost'); if (host) host.innerHTML = `<p class="hint">Stat block unavailable: ${esc(e.message)}</p>`; }
     }
@@ -297,6 +328,7 @@ function combatantPanel(c) {
         <label class="hint">Name <input class="field" id="insName" data-path="name" data-required value="${esc(c.name)}"></label></div>`}
     </div>
     ${deathSaves}
+    ${resourcesHtml(c)}
     <div class="blk"><h4>Conditions</h4>
       ${chipsHtml(c)}
       <div class="line"><select class="field" id="insCond" aria-label="Condition">${S.meta.conditions.map(n => `<option>${n}</option>`).join('')}</select>
@@ -351,7 +383,7 @@ export async function addMonster(idx) {
     const hp = rollHp ? Math.max(1, roll(m.hit_dice || '')?.total || m.hit_points) : m.hit_points;
     const init = d20() + initBonus;
     S.enc.c.push({ id: uid(), ref: `monster:${idx}`, name, kind: 'foe', init, mod: dexMod, ac: monAC(m), hp, max: hp, temp: 0, exh: 0,
-      conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100 });
+      conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100, rx: false, res: R.monsterResources(m) });
     return init;
   });
   const waiting = joined(S.enc.c.slice(-qty));
@@ -394,6 +426,8 @@ function onListClick(e) {
       changed(c, a === 'qdmg' ? R.damage(ctx, c, v, e.shiftKey) : R.heal(ctx, c, v));
     } else if (a === 'rmcond') { remember(`Remove ${c.conds[+b.dataset.i]?.n} from ${who(c)}`); c.conds.splice(+b.dataset.i, 1); changed(c); }
     else if (a === 'exhdown') { remember(`Lower ${who(c)}'s Exhaustion`); changed(c, R.setExhaustion(ctx, c, R.exhaustion(ctx, c) - 1)); }
+    else if (a === 'rx') { remember(`Reaction for ${who(c)}`); c.rx = !c.rx; changed(c); }
+    else if (a === 'leg') { remember(`Legendary action for ${who(c)}`); R.toggleSlot(c.res.leg, +b.dataset.p); changed(c); }
     renderTracker();
     if (S.sel?.id === c.id) renderInspector();
     return;
@@ -434,10 +468,25 @@ async function onInspectClick(e) {
     addcond: () => `Add ${$('#insCond').value} to ${who(c)}`, rmcond: () => `Remove ${c.conds[+b.dataset.i]?.n} from ${who(c)}`,
     exhdown: () => `Lower ${who(c)}'s Exhaustion`, slot: () => `Spell slot for ${who(c)}`, ds: () => `Death save mark for ${who(c)}`,
     dsroll: () => `Death save for ${who(c)}`, dup: () => `Duplicate ${who(c)}`, del: () => S.confirm.del === c.id && `Remove ${who(c)}`,
+    rx: () => `Reaction for ${who(c)}`, leg: () => `Legendary action for ${who(c)}`, lr: () => `Legendary Resistance for ${who(c)}`,
+    use: () => `${c.res.uses[+b.dataset.i].name} for ${who(c)}`, day: () => `${c.res.uses[+b.dataset.i].name} for ${who(c)}`,
+    recharge: () => `Recharge roll for ${who(c)}`,
   };
   const label = UNDO[a]?.();
   if (label) remember(label);
   switch (a) {
+    case 'rx': c.rx = !c.rx; changed(c); break;
+    case 'leg': R.toggleSlot(c.res.leg, +b.dataset.p); changed(c); break;
+    case 'lr': R.toggleSlot(c.res.lr, +b.dataset.p); changed(c); break;
+    case 'day': R.toggleSlot(c.res.uses[+b.dataset.i], +b.dataset.p); changed(c); break;
+    case 'use': { const u = c.res.uses[+b.dataset.i]; u.used = u.used ? 0 : 1; changed(c); break; }
+    case 'recharge': {
+      const u = c.res.uses[+b.dataset.i];
+      const r = R.rollRecharge(ctx, c, u);
+      pushLog(`${who(c)} · ${u.name} ${r.ok ? 'recharged' : 'not recharged'}`, { total: r.die, detail: `[${r.die}] needs ${u.p}${u.p < 6 ? '–6' : ''}` }, r.ok ? 'crit' : '');
+      changed(c, [r.msg]);
+      break;
+    }
     case 'addcond': {
       const [at, src] = ($('#insWhen')?.value || 'own').split(':');
       changed(c, R.addCondition(ctx, c, $('#insCond').value, parseInt($('#insRounds').value, 10), src ? { src, at } : {}));
@@ -457,7 +506,8 @@ async function onInspectClick(e) {
     }
     case 'dup': {
       const n = JSON.parse(JSON.stringify(c));
-      Object.assign(n, { id: uid(), seq: c.seq + 0.001, hp: n.max, temp: 0, exh: 0, conds: [], ds: { s: 0, f: 0 } });
+      Object.assign(n, { id: uid(), seq: c.seq + 0.001, hp: n.max, temp: 0, exh: 0, conds: [], ds: { s: 0, f: 0 }, rx: false });
+      if (n.res) { if (n.res.leg) n.res.leg.used = 0; if (n.res.lr) n.res.lr.used = 0; n.res.uses.forEach(u => { u.used = 0; }); }
       n.name = R.groupNames(S.enc, c.name.replace(/\s+\d+$/, ''), 1)[0];
       S.enc.c.push(n);
       R.joinCombat(ctx, n);
@@ -556,6 +606,12 @@ export function initCombat() {
       if (path === 'max') {
         c.max = Math.max(1, c.max);
         c.hp = Math.min(c.hp, c.max);
+      }
+      const pool = path.match(/^res\.(leg|lr)\.max$/);
+      if (pool) {
+        const p = c.res[pool[1]];
+        p.max = Math.max(0, Math.min(9, p.max));
+        p.used = Math.min(p.used, p.max);
       }
       const slot = path.match(/^slots\.(\d+)\.max$/);
       if (slot) {
