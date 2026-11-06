@@ -102,6 +102,35 @@ class OnTheSheet(unittest.TestCase):
         s["subclass"] = ""
         self.assertTrue([w for w in rules.derive(s)["warnings"] if "Not proficient" in w])
 
+    def test_battle_smith_uses_int_with_magic_weapons(self):
+        s = char("artificer", 3, "battle-smith-tce", str=10, int=18)
+        mace = {"uid": "m", "name": "Mace", "type": "weapon", "equipped": True, "bonus": 0,
+                "weapon": {"index": "mace", "category": "Simple", "range": "Melee", "dice": "1d6", "dtype": "bludgeoning", "properties": []}}
+        s["inventory"] = [mace]
+        self.assertEqual(rules.derive(s)["attacks"][0]["ability"], "str")
+        mace["bonus"] = 1
+        a = rules.derive(s)["attacks"][0]
+        self.assertEqual((a["ability"], a["to_hit"]), ("int", 4 + 2 + 1))
+
+    def test_soulknife_blades_and_sneak_attack(self):
+        s = char("rogue", 5, "soulknife-tce", dex=16)
+        blade = next(a for a in rules.derive(s)["attacks"] if a["name"] == "Psychic Blade")
+        self.assertEqual((blade["damage"], blade["sneak"], blade["ability"]), ("1d6+3 psychic", "3d6", "dex"))
+
+    def test_genie_wrath_follows_the_genie_kind(self):
+        s = char("warlock", 5, "genie-tce")
+        s["choices"] = {"Genie Kind": "efreeti"}
+        r = next(a for a in rules.derive(s)["attacks"] if a["name"] == "Unarmed Strike")["riders"][0]
+        self.assertEqual((r["name"], r["dice"], r["type"]), ("Genie's Wrath", "3", "fire"))
+
+    def test_hand_of_harm_only_on_unarmed_strikes(self):
+        s = char("monk", 5, "mercy-tce", wis=16)
+        s["inventory"] = [{"uid": "q", "name": "Quarterstaff", "type": "weapon", "equipped": True,
+                           "weapon": {"index": "quarterstaff", "category": "Simple", "range": "Melee", "dice": "1d6", "dtype": "bludgeoning", "properties": []}}]
+        atk = {a["name"]: a for a in rules.derive(s)["attacks"]}
+        self.assertNotIn("riders", atk["Quarterstaff"])
+        self.assertEqual(atk["Unarmed Strike"]["riders"][0]["dice"], "1d6+3")
+
     def test_wrong_class_or_level_warns(self):
         self.assertTrue([w for w in rules.derive(char("wizard", 5, "champion-2024"))["warnings"] if "Fighter subclass" in w])
         self.assertTrue([w for w in rules.derive(char("fighter", 2, "champion-2024"))["warnings"] if "starts at" in w])

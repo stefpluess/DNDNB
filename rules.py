@@ -652,6 +652,7 @@ def derive(sheet):
             "dmg_parts": [(ABILITY_NAMES[ab], bonus)], "range": a.get("range"), "versatile": None,
             "mastery": None, "mastery_known": False, "note": "; ".join(filter(None, [a["from"], a.get("note")])),
             **({"own_riders": [a["rider"]]} if a.get("rider") else {}),
+            **({"sneak": sneak} if sneak and a.get("finesse") else {}),
         })
     crit = (sub or {}).get("crit", 20)
     for e in attacks:
@@ -659,8 +660,9 @@ def derive(sheet):
             e["crit"] = crit
         riders = list(e.pop("own_riders", []))
         for r in (sub or {}).get("riders", []):
-            if r["when"] == "any" or (r["when"] in ("weapon", "melee") and (not e.get("unarmed") or r.get("unarmed"))
-                                      and not (r["when"] == "melee" and e["ranged"])):
+            if r["when"] == "any" or (r["when"] == "unarmed" and e.get("unarmed")) or (
+                    r["when"] in ("weapon", "melee") and (not e.get("unarmed") or r.get("unarmed"))
+                    and not (r["when"] == "melee" and e["ranged"])):
                 riders.append(r)
         if riders:
             e["riders"] = riders
