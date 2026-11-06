@@ -212,7 +212,52 @@ export function renderTracker() {
   $('#pickFoes').disabled = !L.some(c => c.kind === 'foe' && R.hp(ctx, c) > 0);
   renderGroupBar();
   renderPrompts();
+  renderDifficulty();
   renderUndo();
+}
+
+// ---------- difficulty and the end-of-combat summary ----------
+
+let fillingXp = false;
+function renderDifficulty() {
+  const line = $('#diffLine');
+  const foes = S.enc.c.filter(c => c.kind === 'foe');
+  // monsters added before XP was stored: look it up once
+  const missing = foes.filter(c => c.ref && c.xp === undefined);
+  if (missing.length && !fillingXp) {
+    fillingXp = true;
+    Promise.all(missing.map(c => getEntry(...c.ref.split(':')).then(m => { c.xp = +m.experience_points || 0; }, () => { c.xp = 0; })))
+      .then(() => { fillingXp = false; saveEnc(); renderTracker(); });
+  }
+  const pcs = S.enc.c.filter(c => c.kind === 'pc');
+  const levels = pcs.map(c => ctx.linked(c)?.sheet.level).filter(l => l > 0);
+  line.hidden = !foes.length || !pcs.length;
+  if (line.hidden) return;
+  const xp = fightXp(foes);
+  const d = R.difficulty(levels, xp);
+  const notes = [];
+  const noSheet = pcs.filter(c => !ctx.linked(c)).map(who);
+  if (noSheet.length) notes.push(`${noSheet.join(', ')} ${noSheet.length > 1 ? 'have' : 'has'} no sheet, so no level: not counted`);
+  const noXp = foes.filter(c => !c.ref && !c.xp).length;
+  if (noXp) notes.push(`${noXp} custom foe${noXp > 1 ? 's have' : ' has'} no XP`);
+  line.className = `diffline r-${(d.rating || 'none').replace(/\s/g, '').toLowerCase()}`;
+  line.innerHTML = d.rating
+    ? `<b>${d.rating}</b> encounter · ${xp.toLocaleString()} XP of foes for ${levels.length} character${levels.length > 1 ? 's' : ''}
+      <span class="hint">(budgets: Low ${d.low.toLocaleString()} · Moderate ${d.moderate.toLocaleString()} · High ${d.high.toLocaleString()})${notes.length ? ` · ${esc(notes.join('; '))}` : ''}</span>`
+    : `<span class="hint">Difficulty needs party members with a character sheet. ${esc(notes.join('; '))}</span>`;
+}
+
+function showSummary(s) {
+  const dlg = $('#summaryDlg');
+  const list = (arr, fmt) => arr.length ? `<ul>${arr.map(fmt).join('')}</ul>` : '<p class="hint">None.</p>';
+  dlg.innerHTML = `<h2 id="summaryTitle">Combat over</h2>
+    <p>${s.rounds} round${s.rounds === 1 ? '' : 's'}.</p>
+    <h4>Defeated foes</h4>${list(s.defeated, d => `<li>${esc(d.name)}${d.xp ? ` <span class="hint">${d.xp.toLocaleString()} XP</span>` : ''}</li>`)}
+    ${s.xp ? `<p class="xp"><b>${s.xp.toLocaleString()} XP</b>${s.pcs ? ` · <b>${s.each.toLocaleString()} XP</b> each for ${s.pcs} character${s.pcs > 1 ? 's' : ''}` : ''}</p>` : ''}
+    <h4>Dropped to 0 HP</h4>${list(s.downs, d => `<li>${esc(d.name)}${d.n > 1 ? ` (${d.n} times)` : ''}</li>`)}
+    <h4>Damage taken</h4>${list(s.taken, d => `<li>${esc(d.name)} <span class="hint">${d.n}</span></li>`)}
+    <div class="line">${s.defeated.length ? '<button class="btn" data-sum="clear">Remove defeated foes</button>' : ''}<span class="spacer"></span><button class="btn primary" data-sum="close" autofocus>Close</button></div>`;
+  dlg.showModal();
 }
 
 // ---------- area damage: one roll against every ticked creature ----------
@@ -479,6 +524,7 @@ async function doSearch() {
   const q = $('#libSearch').value.trim();
   const ul = $('#libResults');
   $('#libOpts').hidden = S.libKind !== 'monster';
+  if (S.libKind === 'saved') return renderSaved(q);
   if (S.libKind === 'party') {
     const list = [...S.chars.values()].filter(c => c.sheet.name.toLowerCase().includes(q.toLowerCase()));
     ul.innerHTML = (list.length ? '<li><button class="btn sm" data-addparty>Add whole party</button></li>' : '')
@@ -500,19 +546,25 @@ async function doSearch() {
   } catch (e) { ul.innerHTML = `<li class="empty">${esc(e.message)}</li>`; }
 }
 
+/** A new combatant for monster `m` (initiative and, if asked, HP rolled). */
+function monsterCombatant(m, idx, name, rollHp, i = 0, kind = 'foe') {
+  const hp = rollHp ? Math.max(1, roll(m.hit_dice || '')?.total || m.hit_points) : m.hit_points;
+  const initBonus = monInit(m);
+  return { id: uid(), ref: `monster:${idx}`, name, kind, init: d20() + initBonus, mod: m.modifiers?.dexterity ?? initBonus, ac: monAC(m), hp, max: hp,
+    temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100, rx: false,
+    res: R.monsterResources(m), xp: +m.experience_points || 0 };
+}
+
 export async function addMonster(idx) {
   const m = await getEntry('monster', idx);
   const qty = Math.max(1, Math.min(20, parseInt($('#libQty').value, 10) || 1));
   const rollHp = $('#libRollHp').checked;
-  const initBonus = monInit(m), dexMod = m.modifiers?.dexterity ?? initBonus;
   remember(`Add ${qty > 1 ? qty + '× ' : ''}${m.name}`);
   const names = R.groupNames(S.enc, m.name, qty);
   const rolls = names.map((name, i) => {
-    const hp = rollHp ? Math.max(1, roll(m.hit_dice || '')?.total || m.hit_points) : m.hit_points;
-    const init = d20() + initBonus;
-    S.enc.c.push({ id: uid(), ref: `monster:${idx}`, name, kind: 'foe', init, mod: dexMod, ac: monAC(m), hp, max: hp, temp: 0, exh: 0,
-      conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100, rx: false, res: R.monsterResources(m) });
-    return init;
+    const c = monsterCombatant(m, idx, name, rollHp, i);
+    S.enc.c.push(c);
+    return c.init;
   });
   const waiting = joined(S.enc.c.slice(-qty));
   saveEnc(); renderTracker();
@@ -668,7 +720,83 @@ async function onInspectClick(e) {
   renderTracker(); renderInspector();
 }
 
+// ---------- saved encounters (prepared fights) ----------
+
+const baseName = n => String(n).replace(/\s+\d+$/, '');
+const fightXp = list => list.reduce((n, c) => n + (c.kind === 'foe' ? +c.xp || 0 : 0), 0);
+
+async function renderSaved(q) {
+  const ul = $('#libResults');
+  const own = S.enc.c.filter(c => c.kind !== 'pc');
+  const form = `<li class="savefight"><input class="field" id="saveName" placeholder="Name this fight" aria-label="Name for the saved fight" autocomplete="off">
+    <button class="btn sm primary" data-savefight ${own.length ? '' : 'disabled'} title="Saves the foes and allies in the tracker (not the party)">Save current</button></li>`;
+  try {
+    S.saved = await api('/api/saved-encounters');
+  } catch (e) { ul.innerHTML = form + `<li class="empty">${esc(e.message)}</li>`; return; }
+  const list = S.saved.filter(f => f.name.toLowerCase().includes(q.toLowerCase()));
+  ul.innerHTML = form + (list.map(f => {
+    const counts = Object.entries(f.creatures.reduce((m, c) => ({ ...m, [baseName(c.name)]: (m[baseName(c.name)] || 0) + 1 }), {}))
+      .map(([n, k]) => (k > 1 ? `${k}× ${n}` : n)).join(', ');
+    const xp = fightXp(f.creatures);
+    return `<li><button class="r-main" data-loadfight="${f.id}" title="Add these creatures to the tracker"><span class="r-name">${esc(f.name)}</span><span class="r-meta">${esc(counts)}${xp ? ` · ${xp.toLocaleString()} XP` : ''}</span></button>
+      <button class="add" data-loadfight="${f.id}" title="Add to combat">+</button>
+      <button class="add del" data-delfight="${f.id}" title="${S.confirm.delFight === f.id ? 'Click again to delete' : 'Delete this saved fight'}">${S.confirm.delFight === f.id ? '?' : '×'}</button></li>`;
+  }).join('') || `<li class="empty">${S.saved.length ? `Nothing matches "${esc(q)}".` : 'No saved fights yet. Add foes to the tracker, name the fight above and save it.'}</li>`);
+}
+
+async function saveFight() {
+  const name = $('#saveName').value.trim();
+  if (!name) return toast('Name the fight first.');
+  const creatures = S.enc.c.filter(c => c.kind !== 'pc').map(c => ({
+    ref: c.ref, name: c.ref ? baseName(c.name) : c.name, kind: c.kind, max: c.max, ac: c.ac, mod: c.mod, xp: +c.xp || 0, notes: c.notes || '',
+  }));
+  const existing = (S.saved || []).find(f => f.name.toLowerCase() === name.toLowerCase());
+  try {
+    if (existing) await api(`/api/saved-encounters/${existing.id}`, { method: 'PUT', body: { name, creatures } });
+    else await api('/api/saved-encounters', { method: 'POST', body: { name, creatures } });
+    toast(`${existing ? 'Updated' : 'Saved'} "${name}" (${creatures.length} creature${creatures.length > 1 ? 's' : ''}).`);
+  } catch (e) { toast(e.message); }
+  doSearch();
+}
+
+async function loadFight(id) {
+  const f = (S.saved || []).find(x => x.id === id);
+  if (!f) return;
+  const rollHp = $('#libRollHp').checked;
+  let entries;
+  try {
+    entries = await Promise.all(f.creatures.map(c => (c.ref ? getEntry(...c.ref.split(':')) : null)));
+  } catch (e) { return toast(`Could not load a monster: ${e.message}. Is the SRD imported?`); }
+  remember(`Load "${f.name}"`);
+  const added = f.creatures.map((s, i) => {
+    const [name] = R.groupNames(S.enc, baseName(s.name), 1);
+    const m = entries[i];
+    const c = m ? monsterCombatant(m, s.ref.split(':')[1], name, rollHp, i, s.kind)
+      : { id: uid(), name, kind: s.kind, init: d20() + (+s.mod || 0), mod: +s.mod || 0, ac: +s.ac || 10, hp: +s.max || 1, max: +s.max || 1,
+        temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100, rx: false, xp: +s.xp || 0 };
+    if (s.notes) c.notes = s.notes;
+    S.enc.c.push(c);
+    return c;
+  });
+  const waiting = joined(added);
+  saveEnc(); renderTracker();
+  toast(`Added "${f.name}": ${added.map(c => `${c.name} ${c.init}`).join(', ')}.${waiting}`);
+}
+
 function onLibraryClick(e) {
+  if (e.target.closest('[data-savefight]')) return saveFight();
+  const load = e.target.closest('[data-loadfight]');
+  if (load) return loadFight(+load.dataset.loadfight);
+  const del = e.target.closest('[data-delfight]');
+  if (del) {
+    const id = +del.dataset.delfight;
+    if (S.confirm.delFight === id) {
+      S.confirm.delFight = null;
+      return api(`/api/saved-encounters/${id}`, { method: 'DELETE' }).then(doSearch, err => toast(err.message));
+    }
+    S.confirm.delFight = id;
+    return doSearch();
+  }
   const open = e.target.closest('[data-open]');
   if (open) {
     const [kind, idx] = open.dataset.open.split(':');
@@ -695,12 +823,13 @@ function onAddForm(e) {
   const n = Math.max(1, Math.min(20, parseInt($('#a-count').value, 10) || 1));
   const kind = $('#a-kind').value, md = parseInt($('#a-mod').value, 10) || 0;
   const initRaw = $('#a-init').value.trim(), hpStr = $('#a-hp').value, ac = parseInt($('#a-ac').value, 10) || 10;
+  const xp = Math.max(0, parseInt($('#a-xp').value, 10) || 0);
   if (!roll(hpStr)) return toast('HP needs a number or dice, like 45 or 6d8+18.');
   remember(`Add ${n > 1 ? n + '× ' : ''}${name}`);
   R.groupNames(S.enc, name, n).forEach((nm, i) => {
     const hp = Math.max(1, roll(hpStr).total);
     S.enc.c.push({ id: uid(), name: nm, kind, init: initRaw !== '' ? parseInt(initRaw, 10) : d20() + md, mod: md,
-      ac, hp, max: hp, temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100 });
+      ac, hp, max: hp, temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100, xp });
   });
   const waiting = joined(S.enc.c.slice(-n));
   saveEnc(); renderTracker();
@@ -779,7 +908,7 @@ export function initCombat() {
     if (!b) return;
     S.libKind = b.dataset.lib;
     document.querySelectorAll('#libTabs button').forEach(x => x.classList.toggle('on', x === b));
-    $('#libSearch').placeholder = { monster: 'Search monsters', spell: 'Search spells', item: 'Search weapons, armor, magic items', party: 'Search your party' }[S.libKind];
+    $('#libSearch').placeholder = { monster: 'Search monsters', spell: 'Search spells', item: 'Search weapons, armor, magic items', party: 'Search your party', saved: 'Search saved fights' }[S.libKind];
     doSearch();
   });
   $('#libSearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(doSearch, 140); });
@@ -787,7 +916,21 @@ export function initCombat() {
 
   $('#nextBtn').onclick = () => step(1);
   $('#prevBtn').onclick = () => step(-1);
-  $('#endBtn').onclick = () => { remember('End combat'); R.endCombat(S.enc); saveEnc(); renderTracker(); toast('Combat ended.'); };
+  $('#endBtn').onclick = () => {
+    const s = R.summary(ctx);
+    remember('End combat'); R.endCombat(S.enc); saveEnc(); renderTracker();
+    showSummary(s);
+  };
+  $('#summaryDlg').addEventListener('click', e => {
+    const a = e.target.closest('[data-sum]')?.dataset.sum;
+    if (a === 'clear') {
+      remember('Remove defeated foes');
+      R.removeCombatants(ctx, S.enc.c.filter(c => c.kind === 'foe' && R.hp(ctx, c) <= 0).map(c => c.id));
+      if (S.sel?.type === 'c' && !selected()) S.sel = null;
+      saveEnc(); renderTracker(); renderInspector();
+    }
+    if (a) $('#summaryDlg').close();
+  });
   $('#undoBtn').onclick = () => undo(-1);
   $('#redoBtn').onclick = () => undo(1);
   $('#pickFoes').onclick = () => {

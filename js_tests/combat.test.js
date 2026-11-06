@@ -377,6 +377,36 @@ test('a repeated save is asked at the end of the bearer\'s turn and a success en
   assert.equal(ctx.enc.prompts.length, 1);
 });
 
+// ---------- difficulty and summary ----------
+
+test('2024 encounter difficulty adds up each character\'s budget', () => {
+  const four5 = [5, 5, 5, 5];                                                   // budgets 2000 / 3000 / 4400
+  assert.deepEqual(R.difficulty(four5, 1800), { low: 2000, moderate: 3000, high: 4400, xp: 1800, rating: 'Low' });
+  assert.equal(R.difficulty(four5, 3000).rating, 'Moderate');
+  assert.equal(R.difficulty(four5, 3001).rating, 'High');
+  assert.equal(R.difficulty(four5, 5000).rating, 'Above High');
+  assert.equal(R.difficulty([1, 20], 0).high, 100 + 22000);
+  assert.equal(R.difficulty([], 500).rating, null);
+});
+
+test('the summary counts rounds, defeated foes, XP per character, knockouts and damage taken', () => {
+  const pc1 = mk({ name: 'Mira', kind: 'pc', init: 20, hp: 10, max: 10 }), pc2 = mk({ name: 'Bram', kind: 'pc', init: 15 });
+  const orc = mk({ name: 'Orc', init: 10, hp: 15, max: 15, xp: 100 }), wolf = mk({ name: 'Wolf', init: 5, xp: 50 });
+  const ctx = fight([pc1, pc2, orc, wolf]);
+  R.step(ctx, 1);
+  R.damage(ctx, pc1, 12);                                                       // Mira goes down
+  R.damage(ctx, orc, 20);                                                       // the Orc is defeated
+  R.removeCombatants(ctx, [orc.id]);                                            // and removed: still counted by name
+  for (let i = 0; i < 4; i++) R.step(ctx, 1);
+  const s = R.summary(ctx);
+  assert.equal(s.rounds, 2);
+  assert.deepEqual(s.downs, [{ name: 'Mira', n: 1 }]);
+  assert.deepEqual(s.taken, [{ name: 'Orc', n: 15 }, { name: 'Mira', n: 10 }]);
+  assert.deepEqual([s.defeated, s.xp, s.each], [[{ name: 'Orc', xp: 100 }], 100, 50]);
+  R.damage(ctx, wolf, 99);
+  assert.deepEqual([R.summary(ctx).xp, R.summary(ctx).each], [150, 75]);
+});
+
 // ---------- names ----------
 
 test('group names number creatures and never repeat a number', () => {

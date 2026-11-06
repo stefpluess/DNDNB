@@ -118,6 +118,7 @@ export function step(ctx, dir) {
     enc.round = 1;
     enc.acted = [];
     enc.ticks = [];
+    enc.stats = { taken: {}, downs: {} };
     enc.active = (nextUp(ctx, []) || L[0]).id;
     const first = enc.c.find(c => c.id === enc.active);
     enc.prompts = [];
@@ -247,6 +248,11 @@ export function damage(ctx, c, amount, crit = false) {
     if (c.ds.f >= 3) msgs.push(`${name} has died.`);
   }
   set(ctx, c, 'hp', Math.max(0, before - rest));
+  const st = ctx.enc.stats ||= { taken: {}, downs: {} };
+  (st.names ||= {})[c.id] = name;                                    // creatures may be removed before the summary
+  st.taken[c.id] = (st.taken[c.id] || 0) + absorbed + (before - hp(ctx, c));
+  if (!wasDown && hp(ctx, c) === 0 && c.kind === 'pc') st.downs[c.id] = (st.downs[c.id] || 0) + 1;
+  if (!wasDown && hp(ctx, c) === 0 && c.kind === 'foe') (st.defeated ||= {})[c.id] = { name, xp: +c.xp || 0 };
   if (!wasDown && hp(ctx, c) === 0) {
     if (c.kind === 'pc' && rest - before >= maxHp(ctx, c)) msgs.push(`Massive damage: ${name} dies outright.`);
     if (c.kind === 'pc') {
@@ -527,4 +533,45 @@ export function setExhaustion(ctx, c, level) {
 export function toggleSlot(slot, p) {
   if (p < slot.max - slot.used) slot.used++;
   else slot.used = Math.max(0, slot.used - 1);
+}
+
+// ---------- encounter difficulty and the end-of-combat summary ----------
+
+/** 2024 Dungeon Master's Guide: XP budget per character by level, [Low, Moderate, High]. */
+export const XP_BUDGET = {
+  1: [50, 75, 100], 2: [100, 150, 200], 3: [150, 225, 400], 4: [250, 375, 500], 5: [500, 750, 1100],
+  6: [600, 1000, 1400], 7: [750, 1300, 1700], 8: [1000, 1700, 2100], 9: [1300, 2000, 2600], 10: [1600, 2300, 3100],
+  11: [1900, 2900, 4100], 12: [2200, 3700, 4700], 13: [2600, 4200, 5400], 14: [2900, 4900, 6200], 15: [3300, 5400, 7800],
+  16: [3800, 6100, 9800], 17: [4500, 7200, 11700], 18: [5000, 8700, 14200], 19: [5500, 10700, 17200], 20: [6400, 13200, 22000],
+};
+
+/**
+ * Difficulty of `xp` worth of monsters for characters of the given levels: the party's budgets added up,
+ * and the lowest difficulty whose budget covers the XP (2024 has no multiplier for many monsters).
+ */
+export function difficulty(levels, xp) {
+  const lv = levels.map(l => Math.max(1, Math.min(20, Math.floor(+l) || 1)));
+  const [low, moderate, high] = [0, 1, 2].map(i => lv.reduce((n, l) => n + XP_BUDGET[l][i], 0));
+  const rating = !lv.length ? null : xp <= low ? 'Low' : xp <= moderate ? 'Moderate' : xp <= high ? 'High' : 'Above High';
+  return { low, moderate, high, xp, rating };
+}
+
+/** What happened in the fight, for the summary when combat ends. XP for defeated foes is split between the PCs. */
+export function summary(ctx) {
+  const { enc } = ctx;
+  const st = enc.stats || { taken: {}, downs: {} };
+  const pcs = enc.c.filter(c => c.kind === 'pc');
+  const defeated = [
+    ...enc.c.filter(c => c.kind === 'foe' && hp(ctx, c) <= 0).map(c => ({ name: nameOf(ctx, c), xp: +c.xp || 0 })),
+    ...Object.entries(st.defeated || {}).filter(([id]) => !enc.c.some(c => c.id === id)).map(([, d]) => d),   // removed since
+  ];
+  const xp = defeated.reduce((n, d) => n + d.xp, 0);
+  const nameFor = id => { const c = enc.c.find(x => x.id === id); return c ? nameOf(ctx, c) : st.names?.[id] || 'Someone'; };
+  const named = obj => Object.entries(obj).map(([id, n]) => ({ name: nameFor(id), n }))
+    .filter(x => x.n > 0).sort((a, b) => b.n - a.n);
+  return {
+    rounds: enc.active ? enc.round : 0, defeated, xp, pcs: pcs.length,
+    each: pcs.length ? Math.floor(xp / pcs.length) : 0,
+    downs: named(st.downs), taken: named(st.taken),
+  };
 }

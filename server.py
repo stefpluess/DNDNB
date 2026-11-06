@@ -199,6 +199,53 @@ def put_encounter(req, _q):
     return {"ok": True}
 
 
+# ---------- handlers: saved encounters (prepared fights) ----------
+
+SAVED_FIELDS = ("ref", "name", "kind", "hp", "max", "ac", "mod", "xp", "notes")
+
+
+def _clean_saved(body):
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise ApiError("Give the encounter a name.")
+    creatures = []
+    for c in body.get("creatures") or []:
+        if not isinstance(c, dict) or not str(c.get("name") or "").strip():
+            continue
+        creatures.append({k: c[k] for k in SAVED_FIELDS if k in c})
+    if not creatures:
+        raise ApiError("There are no foes or allies to save.")
+    return name[:120], {"creatures": creatures}
+
+
+def list_saved(_req, _q):
+    with db.campaign_session() as conn:
+        rows = conn.execute("SELECT id, name, data, updated FROM saved_encounters ORDER BY name COLLATE NOCASE").fetchall()
+    return [{"id": r["id"], "name": r["name"], "updated": r["updated"], **json.loads(r["data"])} for r in rows]
+
+
+def create_saved(req, _q):
+    name, data = _clean_saved(req.json_body() or {})
+    with db.campaign_session() as conn:
+        cur = conn.execute("INSERT INTO saved_encounters(name, data) VALUES (?, ?)", (name, db.dumps(data)))
+    return {"id": cur.lastrowid, "name": name, **data}
+
+
+def update_saved(req, _q, sid):
+    name, data = _clean_saved(req.json_body() or {})
+    with db.campaign_session() as conn:
+        cur = conn.execute("UPDATE saved_encounters SET name=?, data=?, updated=CURRENT_TIMESTAMP WHERE id=?", (name, db.dumps(data), int(sid)))
+        if cur.rowcount == 0:
+            raise ApiError("That saved encounter no longer exists.", 404)
+    return {"id": int(sid), "name": name, **data}
+
+
+def delete_saved(_req, _q, sid):
+    with db.campaign_session() as conn:
+        conn.execute("DELETE FROM saved_encounters WHERE id=?", (int(sid),))
+    return {"ok": True}
+
+
 ROUTES = [
     ("GET", r"/api/status", status),
     ("GET", r"/api/meta", meta),
@@ -215,6 +262,10 @@ ROUTES = [
     ("GET", r"/api/homebrew/(hb-[\w-]+)", get_homebrew),
     ("PUT", r"/api/homebrew/(hb-[\w-]+)", update_homebrew),
     ("DELETE", r"/api/homebrew/(hb-[\w-]+)", delete_homebrew),
+    ("GET", r"/api/saved-encounters", list_saved),
+    ("POST", r"/api/saved-encounters", create_saved),
+    ("PUT", r"/api/saved-encounters/(\d+)", update_saved),
+    ("DELETE", r"/api/saved-encounters/(\d+)", delete_saved),
     ("GET", r"/api/encounter", get_encounter),
     ("PUT", r"/api/encounter", put_encounter),
 ]

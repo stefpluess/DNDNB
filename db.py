@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS homebrew (
     data     TEXT NOT NULL,
     updated  TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS saved_encounters (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    name    TEXT NOT NULL,
+    data    TEXT NOT NULL,   -- {"creatures": [...]}: the foes and allies to add, without fight state
+    updated TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 

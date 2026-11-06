@@ -24,7 +24,8 @@ export const S = {
   monList: [],
   curMon: null,               // { idx, data }
   // two-step confirmations ("click again to …")
-  confirm: { del: null, clear: false, delChar: null, delMon: null },
+  confirm: { del: null, clear: false, delChar: null, delMon: null, delFight: null },
+  saved: [],                  // saved encounters, as last loaded
 };
 
 export async function api(path, opts = {}) {

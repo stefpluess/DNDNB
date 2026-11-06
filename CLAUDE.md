@@ -35,7 +35,8 @@ Python (the server owns storage and all rules math for sheets and homebrew):
 - `import_srd.py`: Open5e importer; downloads everything before writing, never empties a category,
   prints a sanity check; `--save-dir` / `--from-dir` for offline copies
 - `db.py`: SQLite. `data/srd.db` = reference data (safe to rebuild).
-  `data/campaign.db` = the user's characters, homebrew and the current encounter.
+  `data/campaign.db` = the user's characters, homebrew, saved encounters (prepared fights) and the
+  current encounter. New tables are added with CREATE TABLE IF NOT EXISTS.
   **Never touch campaign.db destructively.**
 
 Front end, `static/js/` (plain ES modules, no framework):
@@ -80,7 +81,8 @@ Front end, `static/js/` (plain ES modules, no framework):
   regained at the start of the creature's turn, Recharge rolled (d6) at the start of its turn,
   Legendary Resistance per day (never resets mid-fight), attack rolls (nat 20 crits, nat 1 misses),
   concentration ends at 0 HP, on a failed Con save or when Incapacitated, and takes its linked
-  effects with it; repeated saves are asked at the end (or start) of the bearer's turn.
+  effects with it; repeated saves are asked at the end (or start) of the bearer's turn,
+  encounter difficulty from the 2024 XP budgets (Low/Moderate/High per character level, no multiplier).
 
 ## Next steps, in order
 1. Run `python import_srd.py` on the live data and fix whatever the sanity check reports.

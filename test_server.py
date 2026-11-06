@@ -116,6 +116,28 @@ class Search(TempData):
         self.assertEqual(server.entry(None, {}, "monster", made["idx"])["name"], "Grik")
 
 
+class SavedEncounters(TempData):
+    def test_round_trip_keeps_only_setup_fields(self):
+        made = server.create_saved(_Body({"name": " Goblin ambush ", "creatures": [
+            {"ref": "monster:goblin-warrior", "name": "Goblin Warrior", "kind": "foe", "xp": 50, "hp": 0, "conds": [{"n": "Prone"}]},
+            {"name": "", "kind": "foe"}]}), {})
+        self.assertEqual(made["name"], "Goblin ambush")
+        self.assertEqual(made["creatures"], [{"ref": "monster:goblin-warrior", "name": "Goblin Warrior", "kind": "foe", "xp": 50, "hp": 0}])
+        server.update_saved(_Body({"name": "Ambush", "creatures": made["creatures"] * 2}), {}, str(made["id"]))
+        listed = server.list_saved(None, {})
+        self.assertEqual([(e["name"], len(e["creatures"])) for e in listed], [("Ambush", 2)])
+        server.delete_saved(None, {}, str(made["id"]))
+        self.assertEqual(server.list_saved(None, {}), [])
+
+    def test_name_and_creatures_are_required(self):
+        with self.assertRaises(server.ApiError):
+            server.create_saved(_Body({"name": "", "creatures": [{"name": "Orc"}]}), {})
+        with self.assertRaises(server.ApiError):
+            server.create_saved(_Body({"name": "Empty", "creatures": []}), {})
+        with self.assertRaises(server.ApiError):
+            server.update_saved(_Body({"name": "Gone", "creatures": [{"name": "Orc"}]}), {}, "99")
+
+
 class _Body:
     """Stands in for the request handler: only json_body() is used by handlers."""
 

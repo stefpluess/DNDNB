@@ -27,6 +27,7 @@
       <button data-lib="spell">Spells</button>
       <button data-lib="item">Items</button>
       <button data-lib="party">Party</button>
+      <button data-lib="saved" title="Prepared encounters">Fights</button>
     </div>
     <input class="field search" id="libSearch" type="search" placeholder="Search monsters" autocomplete="off">
     <div class="libopts" id="libOpts">
@@ -43,6 +44,7 @@
       <button class="btn" id="prevBtn" title="Previous turn (P)">Back</button>
       <button class="btn primary" id="nextBtn" title="Next turn (N)">Start combat</button>
     </div>
+    <p class="diffline" id="diffLine" hidden></p>
     <div class="prompts" id="prompts" hidden></div>
     <div class="groupbar" id="groupBar" hidden></div>
     <div class="list" id="list"></div>
@@ -56,6 +58,7 @@
         <label>Init mod<input class="field" id="a-mod" type="number" value="0"></label>
         <label>HP<input class="field" id="a-hp" placeholder="65 or 10d8+20" required></label>
         <label>AC<input class="field" id="a-ac" type="number" value="12"></label>
+        <label>XP<input class="field" id="a-xp" type="number" min="0" placeholder="0"></label>
         <button class="btn primary" type="submit">Add</button>
       </form>
     </details>
@@ -109,6 +112,7 @@
   <aside class="derived panel-col" id="monPreview"></aside>
 </div>
 
+<dialog id="summaryDlg" class="summary" aria-labelledby="summaryTitle"></dialog>
 <div id="toast" role="status" aria-live="polite"></div>
 <script type="module" src="js/main.js"></script>
 </body>
