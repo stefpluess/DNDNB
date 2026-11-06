@@ -748,6 +748,33 @@ export const CUNNING = {
   obscure: { name: 'Obscure', cost: 3, from: 14, save: 'dex', cond: 'Blinded', rounds: 1, until: 'end', text: 'Dex save or Blinded until the end of your next turn.' },
 };
 
+/**
+ * 2024 Weapon Mastery properties. on: 'hit' or 'miss'; status: applied to the target on a hit (timed by the
+ * attacker's turn); save: the target saves or gets `cond`; note: what the DM handles.
+ */
+export const MASTERY = {
+  Cleave: { on: 'hit', note: 'Once per turn: attack a second creature within 5 ft of the first (no ability modifier to its damage).' },
+  Graze: { on: 'miss', note: 'On a miss, deal damage equal to the ability modifier you attacked with.' },
+  Nick: { on: 'hit', note: "The Light weapon's extra attack is part of the Attack action, not a Bonus Action (once per turn)." },
+  Push: { on: 'hit', note: 'Push a Large or smaller target up to 10 ft straight away.' },
+  Sap: { on: 'hit', status: 'Sapped', note: 'Disadvantage on its next attack before the start of your next turn.' },
+  Slow: { on: 'hit', status: 'Slowed', note: 'Speed −10 ft until the start of your next turn.' },
+  Topple: { on: 'hit', save: 'con', cond: 'Prone', note: 'Con save or Prone.' },
+  Vex: { on: 'hit', status: 'Vexed', note: 'Advantage on your next attack against it before the end of your next turn.' },
+};
+
+/** A mastery's effect after a hit: statuses now; Topple needs the target's save result `saved`. */
+export function masteryOnHit(ctx, atk, tgt, mastery, saved = null) {
+  const m = MASTERY[mastery];
+  if (!m || m.on !== 'hit') return [];
+  if (m.status) return [`${mastery}: ${m.note}`, ...applyStatus(ctx, tgt, m.status, atk)];
+  if (m.save) return saved ? [`${nameOf(ctx, tgt)} resists ${mastery}.`] : [`${mastery}: ${nameOf(ctx, tgt)} is ${m.cond}.`, ...addCondition(ctx, tgt, m.cond)];
+  return [`${mastery}: ${m.note}`];
+}
+
+/** Graze: damage on a miss equals the attack's ability modifier (none if it's 0 or less). */
+export const grazeDamage = abilityMod => Math.max(0, abilityMod);
+
 /** Sneak Attack dice left after paying for Cunning Strikes: "5d6" minus 3 → "2d6" (null if none left). */
 export function sneakAfter(sneak, cost) {
   const n = parseInt(sneak, 10) - cost;

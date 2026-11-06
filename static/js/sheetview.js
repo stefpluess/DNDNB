@@ -63,7 +63,8 @@ export function derivedHtml(ch, { compact = false } = {}) {
     // what the tracker adds on a hit: Rage (while Raging), Sneak Attack, Divine Smite, Great Weapon Fighting
     const extra = { melee: !a.ranged, ...(a.rage ? { rage: a.rage } : {}), ...(a.sneak ? { sneak: a.sneak } : {}),
       ...(a.gwf ? { gwf: true } : {}), ...(d.smite && !a.ranged ? { smite: true } : {}),
-      ...(a.crit ? { crit: a.crit } : {}), ...(a.riders ? { riders: a.riders } : {}) };
+      ...(a.crit ? { crit: a.crit } : {}), ...(a.riders ? { riders: a.riders } : {}),
+      ...(a.mastery && a.mastery_known ? { mastery: a.mastery, mod: a.ability_mod, dc: a.mastery_dc } : {}) };
     return `<div class="atk ${a.equipped ? '' : 'off'}">
       <div class="top-line"><span class="nm">${esc(a.name)}</span>
         ${roll(`1d20${plusMinus(a.to_hit)}`, 'atk', `${name} · ${a.name} to hit`, signed(a.to_hit), 'btn roll', hitTitle, attackAttrs(a.name, [{ e: dmg, t: a.damage_type || '' }], extra))}

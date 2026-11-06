@@ -526,7 +526,9 @@ function attackHtml(c) {
           ${last.parts.length ? `<div class="line"><select class="field" id="atkDmgMod" aria-label="Resistance to this damage">${modOpts('auto', true)}</select>
           <button class="btn bad" data-a="atkapply">Roll ${esc(exprs)} and apply</button>` : '<div class="line"><span class="hint">No damage dice on this attack: apply damage by hand.</span>'}
           <button class="link" data-a="atkclear">Dismiss</button></div></div>`
-      : `<div class="atkres miss"><p><b>${esc(last.feat)} misses ${esc(who(lt))}</b> (${last.nat === 1 ? 'natural 1' : vs}).</p><button class="link" data-a="atkclear">Dismiss</button></div>`;
+      : `<div class="atkres miss"><p><b>${esc(last.feat)} misses ${esc(who(lt))}</b> (${last.nat === 1 ? 'natural 1' : vs}).</p>
+          ${last.extra?.mastery === 'Graze' && R.grazeDamage(last.extra.mod) > 0 ? `<button class="btn sm bad" data-a="graze">Graze: ${R.grazeDamage(last.extra.mod)} ${esc(last.parts[0]?.t || '')} damage</button>` : ''}
+          <button class="link" data-a="atkclear">Dismiss</button></div>`;
   }
   return `<div class="blk"><h4>Attack</h4>
     <div class="line"><label class="hint">Target <select class="field" id="atkTarget"><option value="">None: just roll</option>${others.map(x =>
@@ -557,6 +559,8 @@ function hitOptionsHtml(c, t, last) {
     const focus = d.resources.find(r => r.key === 'focus');
     out.push(`<label class="hint"><input type="checkbox" id="atkStun"${focus && focus.used >= focus.max ? ' disabled' : ''}> Stunning Strike (1 Focus, Con save DC ${d.stunning_dc})</label>`);
   }
+  const ms = x.mastery && R.MASTERY[x.mastery];
+  if (ms?.on === 'hit') out.push(`<label class="hint" title="${esc(ms.note)}"><input type="checkbox" id="atkMastery" checked> Weapon Mastery: ${esc(x.mastery)} (${esc(ms.note)}${ms.save ? ` DC ${x.dc}` : ''})</label>`);
   if (x.sneak && d?.cunning_dc) {
     const opts = Object.entries(R.CUNNING).filter(([, cs]) => d.level >= cs.from && parseInt(x.sneak, 10) >= cs.cost);
     out.push(`<label class="hint">Cunning Strike <select class="field" id="atkCunning"><option value="">none</option>${opts.map(([k, cs]) =>
@@ -650,6 +654,10 @@ function applyAttack(c) {
     ch.sheet.resources_used.focus = (ch.sheet.resources_used.focus || 0) + 1;
     scheduleCharSave(c.charId);
     after.push(...R.onHitSave(ctx, c, t, 'stunning', saveFor('con', ch.derived.stunning_dc, 'Stunning Strike'), ch.derived.stunning_dc));
+  }
+  if ($('#atkMastery')?.checked && x.mastery && standing) {
+    const ms = R.MASTERY[x.mastery];
+    after.push(...R.masteryOnHit(ctx, c, t, x.mastery, ms.save ? saveFor(ms.save, x.dc, x.mastery) : null));
   }
   if (cunning && ch && standing) {
     const cs = R.CUNNING[cunning];
@@ -1017,6 +1025,16 @@ async function onInspectClick(e) {
   if (label) remember(label);
   switch (a) {
     case 'atkapply': applyAttack(c); break;
+    case 'graze': {
+      const last = S.atk.last, t = last && S.enc.c.find(x => x.id === last.target);
+      if (!t) break;
+      const type = last.parts[0]?.t || '';
+      const n = R.adjustDamage(R.grazeDamage(last.extra.mod), { mod: R.defenseMod(R.defensesOf(t), type) });
+      remember(`Graze: ${n} damage to ${who(t)}`);
+      S.atk.last = null;
+      changed(t, [`Graze: ${who(t)} takes ${n}.`, ...(n > 0 ? R.damage(ctx, t, n) : [])]);
+      break;
+    }
     case 'summon': return summonFor(c, b.dataset.k);
     case 'cast': castFor(c); break;
     case 'dodge': case 'reckless': case 'help': case 'secondwind': case 'loh': doAction(c, a); break;

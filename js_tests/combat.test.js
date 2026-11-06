@@ -646,6 +646,20 @@ test('Heroic Inspiration: kept on the sheet; Heroic Warrior regains it each turn
   assert.equal(R.inspired(ctx, o), false);
 });
 
+test('Weapon Mastery effects', () => {
+  const f = mk({ name: 'F', init: 20 }), o = mk({ name: 'O', init: 10 });
+  const ctx = fight([f, o]);
+  R.step(ctx, 1);
+  R.masteryOnHit(ctx, f, o, 'Sap');
+  assert.deepEqual(R.attackHints(o, f).map(h => h.mode), ['dis']);
+  R.masteryOnHit(ctx, f, o, 'Topple', false);
+  assert.ok(R.hasCond(o, 'Prone'));
+  assert.match(R.masteryOnHit(ctx, f, o, 'Push').join(' '), /Push a Large/);
+  assert.deepEqual([R.grazeDamage(3), R.grazeDamage(-1)], [3, 0]);
+  R.step(ctx, 1); R.step(ctx, 1);                                  // start of F's next turn: Sap ends
+  assert.ok(!R.hasCond(o, 'Sapped'));
+});
+
 // ---------- names ----------
 
 test('group names number creatures and never repeat a number', () => {

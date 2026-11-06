@@ -602,6 +602,7 @@ def derive(sheet):
             "dmg_parts": dmg_parts, "range": None, "versatile": None,
             "mastery": w.get("mastery"),
             "mastery_known": (w.get("index") or "").lower() in {x.lower() for x in prof.get("mastery", [])},
+            "ability_mod": m[ab], "mastery_dc": 8 + m[ab] + pb,     # Graze damage and Topple's save DC
         }
         if w.get("range_normal") and (ranged or "thrown" in props):
             entry["range"] = f"{w['range_normal']}/{w['range_long']} ft" if w.get("range_long") else f"{w['range_normal']} ft"
