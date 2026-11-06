@@ -78,7 +78,9 @@ Front end, `static/js/` (plain ES modules, no framework):
   monster initiative from the stat block, damage order (half on a save, then resistance, then
   vulnerability), condition timers that count down on another creature's turn, reactions and legendary actions
   regained at the start of the creature's turn, Recharge rolled (d6) at the start of its turn,
-  Legendary Resistance per day (never resets mid-fight).
+  Legendary Resistance per day (never resets mid-fight), attack rolls (nat 20 crits, nat 1 misses),
+  concentration ends at 0 HP, on a failed Con save or when Incapacitated, and takes its linked
+  effects with it; repeated saves are asked at the end (or start) of the bearer's turn.
 
 ## Next steps, in order
 1. Run `python import_srd.py` on the live data and fix whatever the sanity check reports.

@@ -6,7 +6,7 @@ import { toast } from './util.js';
 export const S = {
   meta: null,                 // lists from /api/meta: abilities, skills, classes, conditions, ...
   srdCounts: {},
-  enc: { round: 1, active: null, acted: [], skip: true, c: [], ticks: [] },
+  enc: { round: 1, active: null, acted: [], skip: true, c: [], ticks: [], prompts: [] },
   chars: new Map(),           // id -> { id, sheet, derived }
   entryCache: new Map(),      // "kind:idx" -> reference entry
   view: 'combat',
@@ -16,7 +16,8 @@ export const S = {
   editingSlots: new Set(),    // combatant ids with the slot editor open (UI only, never saved)
   targets: new Map(),         // combatant id -> { half, mod }: ticked for area damage (UI only, never saved)
   groupAmt: '',               // what's typed in the area damage box
-  atk: { target: {}, mode: {}, last: null },   // attacks: target and roll mode per attacker id, last attack result (UI only)
+  atk: { target: {}, mode: {}, last: null },
+  condMoreOpen: false,        // the "concentration and repeated saves" options are open   // attacks: target and roll mode per attacker id, last attack result (UI only)
   // party view
   currentChar: null,
   // bestiary view

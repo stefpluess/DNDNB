@@ -1,12 +1,12 @@
 // Combat rules for the tracker (D&D 2024). DOM-free so it can be tested in Node.
 //
 // Functions take a context `ctx = { enc, linked(c) }`:
-//   enc        the encounter: { round, active, acted: [ids], skip, c: [combatants], ticks: [] }
+//   enc        the encounter: { round, active, acted: [ids], skip, c: [combatants], ticks: [], prompts: [] }
 //   linked(c)  the character ({ sheet, derived }) a PC combatant is linked to, or null
 // They change the encounter (and linked sheets) in place and return messages to show the DM.
 //
 // A combatant: { id, name, kind: 'pc'|'foe'|'ally', init, mod, seq, ac, hp, max, temp, exh,
-//                conds: [{ n, d, src?, at?, fresh? }], slots: [{max, used}], ds: { s, f }, ref?, charId?, notes,
+//                conds: [{ n, d, src?, at?, fresh?, conc?, save?: { ab, dc, when } }], slots: [{max, used}], ds: { s, f }, ref?, charId?, notes,
 //                rx (reaction used), res?: monster resources, see monsterResources() }
 // ctx.rand (optional) replaces Math.random for recharge rolls in tests.
 
@@ -84,10 +84,11 @@ export const tickEnd = (ctx, c) => tick(ctx, c, 'end');
 const clone = x => (x === undefined ? undefined : JSON.parse(JSON.stringify(x)));
 /** Everything a turn change can touch: who's up, who acted, condition timers, reactions and monster resources. */
 const snapshot = enc => ({
-  id: enc.active, round: enc.round, acted: [...actedIds(enc)],
+  id: enc.active, round: enc.round, acted: [...actedIds(enc)], prompts: clone(enc.prompts || []),
   cs: Object.fromEntries(enc.c.map(c => [c.id, { conds: clone(c.conds), rx: !!c.rx, res: clone(c.res) }])),
 });
 function restoreSnapshot(enc, snap) {
+  enc.prompts = (snap.prompts || []).filter(p => enc.c.some(c => c.id === p.cid));
   for (const c of enc.c) {
     const s = snap.cs?.[c.id];
     if (s) { c.conds = s.conds; c.rx = s.rx; if (s.res !== undefined) c.res = s.res; }
@@ -119,7 +120,9 @@ export function step(ctx, dir) {
     enc.ticks = [];
     enc.active = (nextUp(ctx, []) || L[0]).id;
     const first = enc.c.find(c => c.id === enc.active);
+    enc.prompts = [];
     msgs.push(...startTurn(ctx, first), ...tick(ctx, first, 'start'));
+    addSavePrompts(ctx, first, 'start');
     return [...msgs, ...dyingNote(ctx)];
   }
   if (dir > 0) {
@@ -127,12 +130,15 @@ export function step(ctx, dir) {
     enc.ticks.push(snapshot(enc));
     if (enc.ticks.length > 100) enc.ticks.shift();
     msgs.push(...tick(ctx, cur, 'end'));
+    enc.prompts = [];
+    addSavePrompts(ctx, cur, 'end');
     const acted = [...actedIds(enc), cur.id];
     let nx = nextUp(ctx, acted);
     if (nx) enc.acted = acted;
     else { enc.round++; enc.acted = []; nx = nextUp(ctx, []) || cur; }
     enc.active = nx.id;
     msgs.push(...startTurn(ctx, nx), ...tick(ctx, nx, 'start'));
+    addSavePrompts(ctx, nx, 'start');
     return [...msgs, ...dyingNote(ctx)];
   }
   // back
@@ -166,6 +172,7 @@ export function nextAfter(ctx, id) {
 }
 
 export function endCombat(enc) {
+  enc.prompts = [];
   enc.active = null;
   enc.round = 1;
   enc.acted = [];
@@ -193,6 +200,8 @@ export function joinCombat(ctx, c) {
 export function removeCombatants(ctx, ids) {
   const { enc } = ctx;
   const gone = new Set(ids);
+  for (const c of enc.c) for (const x of c.conds) if (x.conc && gone.has(x.src)) x.gone = true;
+  for (const c of enc.c) c.conds = c.conds.filter(x => !x.gone);
   const acted = actedIds(enc).filter(id => !gone.has(id));
   if (enc.active && gone.has(enc.active)) {
     const left = { ...ctx, enc: { ...enc, c: enc.c.filter(x => !gone.has(x.id)) } };
@@ -204,6 +213,7 @@ export function removeCombatants(ctx, ids) {
   enc.acted = enc.active ? acted : [];
   for (const c of enc.c) for (const x of c.conds) if (x.src && gone.has(x.src)) { delete x.src; delete x.at; delete x.fresh; }
   enc.ticks = (enc.ticks || []).filter(t => !gone.has(t.id));
+  enc.prompts = (enc.prompts || []).filter(p => !gone.has(p.cid));
 }
 
 /**
@@ -243,12 +253,11 @@ export function damage(ctx, c, amount, crit = false) {
       msgs.push(`${name} drops to 0 HP.`);
       if (!hasCond(c, 'Unconscious')) c.conds.push({ n: 'Unconscious', d: null });
     } else msgs.push(`${name} is down.`);
-    if (hasCond(c, 'Concentrating')) {
-      c.conds = c.conds.filter(x => x.n !== 'Concentrating');
-      msgs.push('Concentration lost.');
-    }
+    if (hasCond(c, 'Concentrating')) msgs.push(...endConcentration(ctx, c));
   } else if (hp(ctx, c) > 0 && hasCond(c, 'Concentrating')) {
-    msgs.push(`${name}: Con save DC ${concentrationDC(amount)} to keep concentration.`);
+    const dc = concentrationDC(amount);
+    msgs.push(`${name}: Con save DC ${dc} to keep concentration.`);
+    addPrompt(ctx, { cid: c.id, kind: 'conc', ab: 'con', dc });
   }
   return msgs;
 }
@@ -417,25 +426,93 @@ export function spend(pool, delta = 1) {
 
 // ---------- conditions ----------
 
+/** 2024: these conditions include Incapacitated, which ends concentration. */
+export const INCAPACITATING = ['Incapacitated', 'Paralyzed', 'Petrified', 'Stunned', 'Unconscious'];
+
 /**
- * Add a condition (or reset its duration). Adding Exhaustion raises its level instead.
- * `opts.src` is the creature whose turn the timer counts down on (default: the bearer's own turn end),
- * `opts.at` is 'end' or 'start' of that turn. A timer set during its source's own turn skips that
- * turn's end, so "until the end of your next turn" lasts through the next turn.
+ * Add a condition (or reset its duration). Adding Exhaustion raises its level instead. Options:
+ *   src, at   the creature whose turn the rounds count down on ('end' or 'start' of that turn; default:
+ *             the end of the bearer's own turn). A timer set during its source's own turn skips that
+ *             turn's end, so "until the end of your next turn" lasts through the next turn.
+ *   conc      the condition comes from `src`'s concentration spell: it ends when that concentration ends,
+ *             and `src` is marked Concentrating.
+ *   save      { ab, dc, when }: the bearer repeats a save at the 'end' (or 'start') of each of its turns.
  */
 export function addCondition(ctx, c, name, rounds, opts = {}) {
   if (name === 'Exhaustion') return setExhaustion(ctx, c, exhaustion(ctx, c) + 1);
+  const msgs = [];
   const d = rounds > 0 ? rounds : null;
-  const src = opts.src && opts.src !== c.id && ctx.enc.c.some(x => x.id === opts.src) ? opts.src : null;
+  const srcC = opts.src && opts.src !== c.id ? ctx.enc.c.find(x => x.id === opts.src) : null;
   const cond = { n: name, d };
-  if (d && src) {
-    cond.src = src;
-    cond.at = opts.at === 'start' ? 'start' : 'end';
-    if (cond.at === 'end' && ctx.enc.active === src) cond.fresh = true;
+  if (srcC) {
+    cond.src = srcC.id;
+    if (d) {
+      cond.at = opts.at === 'start' ? 'start' : 'end';
+      if (cond.at === 'end' && ctx.enc.active === srcC.id) cond.fresh = true;
+    }
+    if (opts.conc) {
+      cond.conc = true;
+      if (!hasCond(srcC, 'Concentrating')) srcC.conds.push({ n: 'Concentrating', d: null });
+    }
   }
+  if (opts.save?.ab && opts.save.dc > 0) cond.save = { ab: opts.save.ab, dc: +opts.save.dc, when: opts.save.when === 'start' ? 'start' : 'end' };
   const i = c.conds.findIndex(x => x.n === name);
   if (i >= 0) c.conds[i] = cond; else c.conds.push(cond);
+  if (INCAPACITATING.includes(name) && hasCond(c, 'Concentrating')) msgs.push(...endConcentration(ctx, c));
+  return msgs;
+}
+
+/** Remove the condition at index i. Removing Concentrating ends everything that depended on it. */
+export function removeCondition(ctx, c, i) {
+  const x = c.conds[i];
+  if (!x) return [];
+  if (x.n === 'Concentrating') return endConcentration(ctx, c);
+  c.conds.splice(i, 1);
   return [];
+}
+
+/** `c` loses concentration: Concentrating goes, and so does every condition tied to it. */
+export function endConcentration(ctx, c) {
+  c.conds = c.conds.filter(x => x.n !== 'Concentrating');
+  const ended = [];
+  for (const o of ctx.enc.c) {
+    const keep = o.conds.filter(x => !(x.conc && x.src === c.id));
+    if (keep.length !== o.conds.length) ended.push(...o.conds.filter(x => !keep.includes(x)).map(x => `${x.n} on ${nameOf(ctx, o)}`));
+    o.conds = keep;
+  }
+  ctx.enc.prompts = (ctx.enc.prompts || []).filter(p => !(p.kind === 'conc' && p.cid === c.id));
+  return [`${nameOf(ctx, c)} loses concentration${ended.length ? `: ${ended.join(', ')} ended` : ''}.`];
+}
+
+// ---------- saving throw prompts ----------
+// enc.prompts lists saves the DM still has to resolve: { id, cid, kind: 'save' | 'conc', n?, ab, dc }.
+// They're replaced at every turn change.
+
+function addPrompt(ctx, p) {
+  const { enc } = ctx;
+  enc.prompts ||= [];
+  enc.pseq = (enc.pseq || 0) + 1;
+  enc.prompts.push({ id: `p${enc.pseq}`, ...p });
+}
+
+/** Repeated saves for `c`'s conditions at the 'start' or 'end' of its turn. */
+function addSavePrompts(ctx, c, when) {
+  for (const x of c.conds) if (x.save && x.save.when === when) addPrompt(ctx, { cid: c.id, kind: 'save', n: x.n, ab: x.save.ab, dc: x.save.dc });
+}
+
+/** The DM resolved a prompt: a successful repeat save ends the condition, a failed concentration save ends concentration. */
+export function resolvePrompt(ctx, id, success) {
+  const { enc } = ctx;
+  const p = (enc.prompts || []).find(x => x.id === id);
+  if (!p) return [];
+  enc.prompts = enc.prompts.filter(x => x !== p);
+  const c = enc.c.find(x => x.id === p.cid);
+  if (!c) return [];
+  const name = nameOf(ctx, c);
+  if (p.kind === 'conc') return success ? [`${name} keeps concentration.`] : endConcentration(ctx, c);
+  if (!success) return [`${name} fails the save: still ${p.n}.`];
+  const i = c.conds.findIndex(x => x.n === p.n);
+  return [`${name} succeeds: ${p.n} ends.`, ...(i >= 0 ? removeCondition(ctx, c, i) : [])];
 }
 
 export function setExhaustion(ctx, c, level) {

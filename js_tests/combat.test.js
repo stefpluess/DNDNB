@@ -37,7 +37,7 @@ test('a PC at 0 HP falls unconscious and loses concentration', () => {
   const msgs = R.damage(ctx, c, 12);
   assert.equal(c.hp, 0);
   assert.deepEqual(c.conds.map(x => x.n), ['Unconscious']);
-  assert.match(msgs.join(' '), /Concentration lost/);
+  assert.match(msgs.join(' '), /loses concentration/);
 });
 
 test('massive damage kills outright', () => {
@@ -325,6 +325,56 @@ test('spending uses stays within the pool', () => {
   assert.equal(pool.used, 3);
   R.spend(pool, -5);
   assert.equal(pool.used, 0);
+});
+
+// ---------- concentration and repeated saves ----------
+
+test('effects tied to concentration end with it', () => {
+  const cleric = mk({ name: 'Cleric', hp: 30, max: 30 }), a = mk({ name: 'A' }), b = mk({ name: 'B' });
+  const ctx = fight([cleric, a, b]);
+  R.addCondition(ctx, a, 'Blessed', 10, { src: cleric.id, conc: true });
+  R.addCondition(ctx, b, 'Blessed', 10, { src: cleric.id, conc: true });
+  R.addCondition(ctx, b, 'Frightened', 1, { src: cleric.id });                  // not concentration
+  assert.ok(R.hasCond(cleric, 'Concentrating'));                                 // marked automatically
+  R.damage(ctx, cleric, 8);
+  assert.deepEqual(ctx.enc.prompts.map(p => [p.kind, p.dc]), [['conc', 10]]);
+  const msgs = R.resolvePrompt(ctx, ctx.enc.prompts[0].id, false);              // fails the Con save
+  assert.match(msgs.join(' '), /Cleric loses concentration: Blessed on A, Blessed on B ended/);
+  assert.deepEqual([a.conds, b.conds.map(x => x.n), cleric.conds], [[], ['Frightened'], []]);
+});
+
+test('removing Concentrating by hand, incapacitation or leaving the fight ends linked effects', () => {
+  const w = mk({ name: 'W' }), t = mk({ name: 'T' });
+  let ctx = fight([w, t]);
+  R.addCondition(ctx, t, 'Slowed', null, { src: w.id, conc: true });
+  R.removeCondition(ctx, w, w.conds.findIndex(x => x.n === 'Concentrating'));
+  assert.deepEqual(t.conds, []);
+  R.addCondition(ctx, t, 'Slowed', null, { src: w.id, conc: true });
+  assert.match(R.addCondition(ctx, w, 'Stunned').join(' '), /W loses concentration/);
+  assert.deepEqual(t.conds, []);
+  R.addCondition(ctx, t, 'Slowed', null, { src: w.id, conc: true });
+  R.removeCombatants(ctx, [w.id]);
+  assert.deepEqual(t.conds, []);
+});
+
+test('a repeated save is asked at the end of the bearer\'s turn and a success ends the condition', () => {
+  const orc = mk({ name: 'Orc', init: 20 }), pc = mk({ name: 'PC', kind: 'pc', init: 10 });
+  const ctx = fight([orc, pc]);
+  R.step(ctx, 1);
+  R.addCondition(ctx, orc, 'Paralyzed', null, { save: { ab: 'wis', dc: 15 } });
+  assert.deepEqual(ctx.enc.prompts, []);
+  R.step(ctx, 1);                                                               // the Orc's turn ends
+  assert.deepEqual(ctx.enc.prompts.map(p => [p.cid, p.n, p.ab, p.dc]), [[orc.id, 'Paralyzed', 'wis', 15]]);
+  assert.match(R.resolvePrompt(ctx, ctx.enc.prompts[0].id, false).join(' '), /still Paralyzed/);
+  assert.ok(R.hasCond(orc, 'Paralyzed'));
+  R.step(ctx, 1); R.step(ctx, 1);                                               // its next turn ends
+  R.resolvePrompt(ctx, ctx.enc.prompts[0].id, true);
+  assert.ok(!R.hasCond(orc, 'Paralyzed'));
+  R.step(ctx, -1);                                                              // Back: before its turn ended
+  assert.ok(R.hasCond(orc, 'Paralyzed'));
+  assert.equal(ctx.enc.prompts.length, 0);
+  R.step(ctx, 1);                                                               // ending the turn again asks again
+  assert.equal(ctx.enc.prompts.length, 1);
 });
 
 // ---------- names ----------
