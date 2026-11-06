@@ -202,5 +202,60 @@ class Static(unittest.TestCase):
             self.assertEqual(sent.get("code"), 404, path)
 
 
+class Caller(unittest.TestCase):
+    """Only the app's own page (or a local tool) may use the API: no other website, no DNS rebinding."""
+
+    def ok(self, headers, api=True):
+        server.check_caller(headers, 8765, api)
+
+    def refused(self, headers, api=True):
+        with self.assertRaises(server.ApiError) as cm:
+            server.check_caller(headers, 8765, api)
+        self.assertEqual(cm.exception.status, 403)
+
+    def test_the_app_and_local_tools_are_allowed(self):
+        self.ok({"Host": "127.0.0.1:8765", "Origin": "http://127.0.0.1:8765", "Sec-Fetch-Site": "same-origin"})
+        self.ok({"Host": "localhost:8765", "Origin": "http://localhost:8765"})
+        self.ok({"Host": "127.0.0.1:8765"})                     # curl, a plain GET
+        self.ok({})                                             # HTTP/1.0 without a Host header
+
+    def test_other_websites_are_refused(self):
+        self.refused({"Host": "127.0.0.1:8765", "Origin": "https://evil.example"})
+        self.refused({"Host": "127.0.0.1:8765", "Origin": "http://localhost:3000"})        # another local app
+        self.refused({"Host": "127.0.0.1:8765", "Origin": "null"})                         # sandboxed frame, file://
+        self.refused({"Host": "127.0.0.1:8765", "Sec-Fetch-Site": "cross-site"})
+
+    def test_dns_rebinding_is_refused(self):
+        self.refused({"Host": "evil.example:8765"})
+        self.refused({"Host": "127.0.0.1:9999"})
+        self.refused({"Host": "evil.example:8765"}, api=False)
+
+    def test_a_link_from_another_site_still_opens_the_page(self):
+        self.ok({"Host": "127.0.0.1:8765", "Sec-Fetch-Site": "cross-site"}, api=False)
+
+
+class Bodies(unittest.TestCase):
+    def body(self, raw, length=None):
+        class Fake(server.Handler):
+            def __init__(self):
+                self.headers = {"Content-Length": str(len(raw)) if length is None else length}
+                self.rfile = io.BytesIO(raw)
+        return Fake().json_body()
+
+    def test_objects_pass_and_anything_else_is_a_clean_error(self):
+        self.assertEqual(self.body(b'{"a": 1}'), {"a": 1})
+        self.assertIsNone(self.body(b""))
+        for raw, length in ((b"[1, 2]", None), (b"{oops", None), (b"\xff\xfe", None), (b"{}", "lots")):
+            with self.assertRaises(server.ApiError, msg=raw):
+                self.body(raw, length)
+
+
+class RestInput(TempData):
+    def test_bad_hit_dice_count_is_a_clean_error(self):
+        made = server.create_character(_Body({"sheet": {"name": "Vex", "class_name": "Fighter", "level": 3}}), {})
+        with self.assertRaises(server.ApiError):
+            server.update_character(_Body({"sheet": made["sheet"], "rest": "short", "hit_dice": "two"}), {}, made["id"])
+
+
 if __name__ == "__main__":
     unittest.main()

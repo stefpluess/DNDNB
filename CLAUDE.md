@@ -28,7 +28,9 @@ In the browser console, `ledger.S` shows the app state and `ledger.combat` the c
 
 ## Layout
 Python (the server owns storage and all rules math for sheets and homebrew):
-- `server.py`: http.server JSON API + static files; routes are a list at the bottom
+- `server.py`: http.server JSON API + static files; routes are a list at the bottom. `check_caller()` refuses
+  requests whose Host isn't 127.0.0.1/localhost (DNS rebinding) or whose Origin is another site; request bodies
+  must be JSON objects
 - `rules.py`: character sheet math; `derive(sheet)`, `item_from_srd()`
 - `homebrew.py`: homebrew creatures; `normalize()` fills mods, saves, PB/XP from CR, attacks, auto text
 - `common.py`: shared constants and formatting, served to the browser as `GET /api/meta`
@@ -63,7 +65,8 @@ Front end, `static/js/` (plain ES modules, no framework):
 - UI-only state lives in `S`, never in saved data.
 - Negative numbers display with a typographic minus (`signed()`); dice expressions use "-".
 - Skill keys use underscores (`sleight_of_hand`); `common.skill_key()` normalizes.
-- One stylesheet; colors only as tokens on `:root` with dark-mode overrides.
+- One stylesheet; colors only as tokens on `:root` with dark-mode overrides (shadows too: `--shadow`, `--backdrop`).
+  Its sections follow the layout comment at the top; numbers use lining figures (Alegreya's default 0 looks like o).
 
 ## Things learned the hard way
 - Open5e labels the plain Shield as "heavy" armor with `ac_base` 2. `rules.is_shield()` recognizes
@@ -119,8 +122,6 @@ Front end, `static/js/` (plain ES modules, no framework):
 
 ## Next steps, in order
 1. Run `python import_srd.py` on the live data and fix whatever the sanity check reports.
-2. Server hardening: check the Origin/Host header on API requests so a website open in the
-   same browser can't call the local server.
-3. Ideas not chosen yet: a desktop window (Tauri or Electron around the same code).
+2. Ideas not chosen yet: a desktop window (Tauri or Electron around the same code).
 
 Limits: SRD 5.2 monsters only (not the full Monster Manual).

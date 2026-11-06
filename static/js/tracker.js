@@ -40,9 +40,11 @@ const amountFrom = (sel, what) => amountOf($(sel)?.value, what);
 
 // ---------- undo ----------
 // A snapshot holds the encounter plus the combat fields of every linked character sheet
-// (only those, so undoing a hit never reverts edits made in the Party view).
+// (only those, so undoing a hit never reverts edits made in the Party view). Class resources and
+// Heroic Inspiration are in it because combat actions spend them (Second Wind, Lay on Hands, Focus...).
 
-const fightFields = sh => ({ hp: sh.hp, temp_hp: sh.temp_hp, exhaustion: sh.exhaustion, slots: JSON.parse(JSON.stringify(sh.slots || [])) });
+const fightFields = sh => JSON.parse(JSON.stringify({ hp: sh.hp, temp_hp: sh.temp_hp, exhaustion: sh.exhaustion,
+  inspiration: !!sh.inspiration, slots: sh.slots || [], resources_used: sh.resources_used || {} }));
 const history = createHistory({
   capture: () => ({
     enc: JSON.parse(JSON.stringify(S.enc)),
@@ -135,12 +137,17 @@ function renderPrompts() {
     const what = p.kind === 'conc' ? 'to keep concentration' : `to end ${esc(p.n)}`;
     const [yes, no] = p.kind === 'conc' ? ['Kept', 'Lost'] : ['Succeeded', 'Failed'];
     const roll = rule.fail ? `<button class="btn sm" data-p="roll" title="${esc(rule.fail)}: fails ${p.ab.toUpperCase()} saves automatically">Fails automatically (${esc(rule.fail)})</button>`
-      : b != null ? `<button class="btn sm" data-p="roll" title="Roll d20 ${signed(b)}${rule.dis ? ' with Disadvantage' : ''} and resolve">Roll ${signed(b)}${rule.dis ? ' with Disadvantage' : ''}</button>` : '';
+      : b != null ? `<button class="btn sm" data-p="roll" title="Roll d20 ${signed(b)}${saveMode(rule)} and resolve">Roll ${signed(b)}${saveMode(rule)}</button>` : '';
     return `<div class="prompt" data-pid="${p.id}"><span><b>${esc(who(c))}</b>: ${p.ab.toUpperCase()} save DC ${p.dc} ${what}</span>
       ${roll}
       <button class="btn sm ok" data-p="yes">${yes}</button><button class="btn sm bad" data-p="no">${no}</button></div>`;
   }).join('');
 }
+
+/** The d20s a save rolled, for the log: "[7,15 lower]" with Disadvantage, "[7,15 higher]" with Advantage. */
+const saveDice = (dice, rule) => (rule.dis ? `[${dice.join(',')} lower]` : rule.adv ? `[${dice.join(',')} higher]` : `[${dice[0]}]`);
+/** " with Advantage" / " with Disadvantage" for a save button's label. */
+const saveMode = rule => (rule.dis ? ' with Disadvantage' : rule.adv ? ' with Advantage' : '');
 
 /** Roll the Bless / Bane dice a creature adds to an attack roll or save. Returns { total, detail }. */
 function rollExtras(c) {
@@ -166,7 +173,7 @@ function onPromptClick(e) {
     ok = r.ok;
     if (r.auto) toast(`${who(c)} fails automatically (${r.auto}).`);
     else pushLog(`${who(c)} ${p.ab.toUpperCase()} save vs DC ${p.dc}: ${ok ? 'success' : 'failure'}`,
-      { total: r.total, detail: `[${rule.dis ? dice.join(',') + ' lower' : dice[0]}] ${signed(bonus)}${ex.detail}` }, r.die === 20 ? 'crit' : r.die === 1 ? 'fumble' : '');
+      { total: r.total, detail: `${saveDice(dice, rule)} ${signed(bonus)}${ex.detail}` }, r.die === 20 ? 'crit' : r.die === 1 ? 'fumble' : '');
   }
   remember(`${who(c)}'s ${p.kind === 'conc' ? 'concentration' : p.n} save`);
   changed(c, R.resolvePrompt(ctx, p.id, ok));
@@ -214,7 +221,7 @@ function rowHtml(c) {
   const spent = (c.res?.uses || []).filter(u => u.kind === 'recharge' && u.used).map(u => `<span class="spent" title="Rolls to recharge at the start of its turn">${esc(u.name)} spent</span>`).join('');
   return `<div class="${classes}" data-id="${c.id}">
     <input class="field init" type="number" id="init-${c.id}" data-f="init" value="${c.init}" aria-label="Initiative for ${esc(v.name)}">
-    <div class="who"><div class="top-line"><input type="checkbox" class="pick" data-pick${S.targets.has(c.id) ? ' checked' : ''} aria-label="Target ${esc(v.name)}" title="Tick to include in area damage"><span class="nm">${esc(v.name)}</span>${turnTag}<span class="tag">${tag}</span></div><div class="resrow">${rx}${insp}${leg}${spent}</div>${chipsHtml(c)}</div>
+    <div class="who"><div class="top-line"><span class="nmwrap"><input type="checkbox" class="pick" data-pick${S.targets.has(c.id) ? ' checked' : ''} aria-label="Target ${esc(v.name)}" title="Tick to include in area damage"><span class="nm" title="${esc(v.name)}">${esc(v.name)}</span></span>${turnTag}<span class="tag">${tag}</span></div><div class="resrow">${rx}${insp}${leg}${spent}</div>${chipsHtml(c)}</div>
     <span class="ac${R.acOf(ctx, c) !== v.ac ? ' up' : ''}" title="Armor Class${R.acOf(ctx, c) !== v.ac ? ` (${v.ac} base, raised by a spell)` : ''}"><b>${R.acOf(ctx, c)}</b><small>AC</small></span>
     <div class="hp ${hpState(c)}"><div class="meter"><i style="width:${Math.max(0, Math.min(100, hp / max * 100))}%"></i>${temp ? `<em style="width:${Math.min(100, temp / max * 100)}%"></em>` : ''}</div>
       <span class="num">${hp}<small>/${max}</small>${temp ? ` <span class="tmp">+${temp}</span>` : ''}</span></div>
@@ -382,9 +389,9 @@ async function rollGroupSaves() {
     const ex = rollExtras(t.c);
     const r = R.rollSave({ dice, bonus, dc, rule, extra: ex.total });
     tgt.half = r.ok;
-    tgt.note = `${r.total} ${r.ok ? 'saved' : 'failed'}${rule.dis ? ' (Disadvantage)' : ''}`;
+    tgt.note = `${r.total} ${r.ok ? 'saved' : 'failed'}${rule.dis ? ' (Disadvantage)' : rule.adv ? ' (Advantage)' : ''}`;
     pushLog(`${who(t.c)} ${G.ab.toUpperCase()} save vs DC ${dc}: ${r.ok ? 'success' : 'failure'}`,
-      { total: r.total, detail: `[${rule.dis ? dice.join(',') + ' lower' : dice[0]}] ${signed(bonus)}` }, r.die === 20 ? 'crit' : r.die === 1 ? 'fumble' : '');
+      { total: r.total, detail: `${saveDice(dice, rule)} ${signed(bonus)}${ex.detail}` }, r.die === 20 ? 'crit' : r.die === 1 ? 'fumble' : '');
   }
   renderGroupBar();
 }
@@ -659,7 +666,7 @@ function applyAttack(c) {
   const saveFor = (ab, dc, label) => {
     const rule = R.saveRule(t, ab), bonus = saveBonus(t, ab) ?? 0, dice = [d20(), d20()];
     const r = R.rollSave({ dice, bonus, dc, rule, extra: rollExtras(t).total });
-    pushLog(`${who(t)} ${ab.toUpperCase()} save vs ${label} DC ${dc}: ${r.ok ? 'success' : 'failure'}`, { total: r.total ?? 0, detail: r.auto ? `fails automatically (${r.auto})` : `[${r.die}] ${signed(bonus)}` });
+    pushLog(`${who(t)} ${ab.toUpperCase()} save vs ${label} DC ${dc}: ${r.ok ? 'success' : 'failure'}`, { total: r.total ?? 0, detail: r.auto ? `fails automatically (${r.auto})` : `${saveDice(dice, rule)} ${signed(bonus)}` });
     return r.ok;
   };
   if (stun && ch && standing) {
@@ -928,7 +935,8 @@ function monsterCombatant(m, idx, name, rollHp, i = 0, kind = 'foe') {
 }
 
 export async function addMonster(idx) {
-  const m = await getEntry('monster', idx);
+  let m;
+  try { m = await getEntry('monster', idx); } catch (e) { return toast(`Could not load that monster: ${e.message}`); }
   const qty = Math.max(1, Math.min(20, parseInt($('#libQty').value, 10) || 1));
   const rollHp = $('#libRollHp').checked;
   remember(`Add ${qty > 1 ? qty + '× ' : ''}${m.name}`);
@@ -1006,11 +1014,14 @@ async function onInspectClick(e) {
   const give = e.target.closest('[data-give]');
   if (give) {
     const [kind, idx] = give.dataset.give.split(':');
-    const id = +$('#giveTo').value, ch = S.chars.get(id);
-    const item = await api(`/api/item-template/${kind}/${idx}`);
-    ch.sheet.inventory.push(item);
-    await charOp(id);
-    return toast(`${item.name} added to ${ch.sheet.name}'s inventory.${item.notes ? ' ' + item.notes : ''}`);
+    const id = +$('#giveTo')?.value, ch = S.chars.get(id);
+    if (!ch) return toast('Pick a character first.');
+    try {
+      const item = await api(`/api/item-template/${kind}/${idx}`);
+      ch.sheet.inventory.push(item);
+      await charOp(id);
+      return toast(`${item.name} added to ${ch.sheet.name}'s inventory.${item.notes ? ' ' + item.notes : ''}`);
+    } catch (e) { return toast(e.message); }
   }
   const b = e.target.closest('[data-a]');
   const c = selected();

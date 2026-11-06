@@ -70,6 +70,14 @@ class Homebrew(unittest.TestCase):
         self.assertEqual([homebrew.pb_for_cr(c) for c in (0, 4, 5, 8, 9, 13, 17, 21, 25, 29, 30)],
                          [2, 2, 3, 3, 4, 5, 6, 7, 8, 9, 9])
 
+    def test_negative_to_hit_uses_a_typographic_minus(self):
+        d = homebrew.blank_creature("Weakling")
+        d["ability_scores"].update(strength=1, dexterity=1)
+        d["actions"][0]["_hb"]["to_hit"] = -3
+        d = homebrew.normalize(d, "hb-weak")
+        self.assertIn("*Melee Attack Roll:* \u22123,", d["actions"][0]["desc"])
+        self.assertEqual(d["actions"][0]["attacks"][0]["to_hit_mod"], -3)
+
 
 if __name__ == "__main__":
     unittest.main()

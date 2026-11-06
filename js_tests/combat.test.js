@@ -703,3 +703,39 @@ test('slot pips spend and restore', () => {
   R.toggleSlot(s, 0); assert.equal(s.used, 1);
   R.toggleSlot(s, 2); assert.equal(s.used, 0);       // pip 2 was spent: restore
 });
+
+// ---------- review fixes ----------
+
+test('dying ends concentration and the effects tied to it', () => {
+  const cleric = mk({ name: 'Cleric', kind: 'pc', hp: 0, max: 20, ds: { s: 0, f: 2 } });
+  const ally = mk({ name: 'Ally', kind: 'pc' });
+  const ctx = fight([cleric, ally]);
+  R.addCondition(ctx, ally, 'Blessed', null, { src: cleric.id, conc: true, spell: 'Bless' });
+  assert.ok(R.hasCond(cleric, 'Concentrating'));
+  const msgs = R.setExhaustion(ctx, cleric, 6);
+  assert.ok(cleric.dead);
+  assert.ok(!R.hasCond(cleric, 'Concentrating'));
+  assert.ok(!R.hasCond(ally, 'Blessed'), 'Bless ends with its caster');
+  assert.match(msgs.join(' '), /Blessed on Ally ended/);
+});
+
+test('a character kept up by Relentless Endurance is not counted as dropping', () => {
+  const orc = mk({ name: 'Orc', kind: 'pc', hp: 10, max: 30, cheatDeath: [{ key: 'relentless_endurance', hp: 1, from: 'Relentless Endurance' }] });
+  const ctx = fight([orc]);
+  R.damage(ctx, orc, 12);
+  assert.equal(orc.hp, 1);
+  assert.deepEqual(R.summary(ctx).downs, []);
+  R.damage(ctx, orc, 5);
+  assert.deepEqual(R.summary(ctx).downs, [{ name: 'Orc', n: 1 }]);
+});
+
+test('a turn change with a missing active creature restarts cleanly instead of crashing', () => {
+  const a = mk({ init: 15 }), b = mk({ init: 5 }), ctx = fight([a, b]);
+  ctx.enc.active = 'gone';
+  assert.deepEqual(R.step(ctx, -1), []);
+  assert.equal(ctx.enc.active, null);
+  ctx.enc.active = 'gone';
+  R.step(ctx, 1);
+  assert.equal(ctx.enc.active, a.id);
+  assert.equal(ctx.enc.round, 1);
+});

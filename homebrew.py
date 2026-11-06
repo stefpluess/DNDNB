@@ -10,7 +10,7 @@ import copy
 import re
 import uuid
 
-from common import ABILITY_LONG, ACTION_TYPES, SKILLS, XP_BY_CR, fmt_cr, pb_for_cr, skill_key
+from common import ABILITY_LONG, ACTION_TYPES, SKILLS, XP_BY_CR, fmt_cr, pb_for_cr, signed, skill_key
 
 LONG = list(ABILITY_LONG.values())
 
@@ -97,7 +97,7 @@ def _attack_desc(hb, a):
         reach += " ft"
     reach = reach + "." if reach else ""
     where = (f"reach {reach}" if hb["kind"] == "melee" else f"range {reach}") if reach else ""
-    text = f"*{kind} Attack Roll:* {hb['to_hit']:+d}{', ' + where if where else ''}"
+    text = f"*{kind} Attack Roll:* {signed(hb['to_hit'])}{', ' + where if where else ''}"
     text += "" if text.endswith(".") else "."
     atk = (a.get("attacks") or [{}])[0]
     if atk.get("damage_die_count") or atk.get("damage_bonus"):

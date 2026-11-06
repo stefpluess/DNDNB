@@ -29,6 +29,35 @@ class ApiError(Exception):
         self.status = status
 
 
+# ---------- who may call the server ----------
+#
+# The server only listens on 127.0.0.1, but a web page open in the same browser could still send it
+# requests (a form posting to http://127.0.0.1:8765), or reach it under its own domain name through
+# DNS rebinding. So every request must name this server in its Host header, and a request that says
+# where it comes from (Origin, which browsers send on cross-site and non-GET requests) must come from
+# the app itself.
+
+LOCAL_NAMES = ("127.0.0.1", "localhost", "[::1]")
+
+
+def local_hosts(port):
+    return {f"{n}:{port}" for n in LOCAL_NAMES} | ({*LOCAL_NAMES} if port == 80 else set())
+
+
+def check_caller(headers, port, api=True):
+    """Raise ApiError(403) unless the request comes from the app's own page (or a local tool like curl).
+    api=False (static files): following a link to the app from another site still opens it."""
+    hosts = local_hosts(port)
+    host = (headers.get("Host") or "").strip().lower()
+    if host and host not in hosts:
+        raise ApiError("This server only answers requests addressed to 127.0.0.1 or localhost.", 403)
+    origin = (headers.get("Origin") or "").strip().lower()
+    if origin and origin not in {f"http://{h}" for h in hosts}:
+        raise ApiError("Requests from other websites are not allowed.", 403)
+    if api and (headers.get("Sec-Fetch-Site") or "").lower() in ("cross-site", "same-site"):
+        raise ApiError("Requests from other websites are not allowed.", 403)
+
+
 # ---------- handlers: reference data ----------
 
 def status(_req, _q):
@@ -128,7 +157,11 @@ def update_character(req, _q, cid):
     if body.get("rest") == "long":
         report = rules.long_rest(sheet)
     elif body.get("rest") == "short":
-        report = rules.short_rest(sheet, int(body.get("hit_dice") or 0))
+        try:
+            spend = int(body.get("hit_dice") or 0)
+        except (TypeError, ValueError):
+            raise ApiError("hit_dice must be a whole number.")
+        report = rules.short_rest(sheet, spend)
     with db.campaign_session() as conn:
         cur = conn.execute("UPDATE characters SET name=?, data=?, updated=CURRENT_TIMESTAMP WHERE id=?",
                            (sheet.get("name") or "Unnamed", db.dumps(sheet), cid))
@@ -317,13 +350,20 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def json_body(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        if not n:
+        """The request's JSON object, or None without a body. Every route takes an object."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ApiError("Bad Content-Length header.")
+        if n <= 0:
             return None
         try:
-            return json.loads(self.rfile.read(n))
-        except json.JSONDecodeError:
+            body = json.loads(self.rfile.read(n))
+        except (json.JSONDecodeError, UnicodeDecodeError):
             raise ApiError("Request body is not valid JSON.")
+        if body is not None and not isinstance(body, dict):
+            raise ApiError("Request body must be a JSON object.")
+        return body
 
     def send_json(self, obj, code=200):
         data = json.dumps(obj).encode()
@@ -351,6 +391,7 @@ class Handler(BaseHTTPRequestHandler):
     def dispatch(self, method):
         url = urlparse(self.path)
         try:
+            check_caller(self.headers, self.server.server_address[1], api=url.path.startswith("/api/"))
             for m, pattern, fn in ROUTES:
                 if m == method:
                     match = re.fullmatch(pattern, url.path)

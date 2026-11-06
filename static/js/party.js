@@ -3,7 +3,7 @@
 
 import { bindForm } from './forms.js';
 import { classLine, derivedHtml } from './sheetview.js';
-import { S, api, charOp, onCharSaved, onResourceEvent, scheduleCharSave } from './store.js';
+import { S, api, charOp, onCharSaved, onResourceEvent, saveEnc, scheduleCharSave } from './store.js';
 import { addChar } from './tracker.js';
 import { handleRollClick } from './ui.js';
 import { $, esc, label, ordinal, signed, toast, uid } from './util.js';
@@ -247,9 +247,14 @@ async function onSheetAction(a, ch) {
     }
     case 'delete':
       if (S.confirm.delChar === ch.id) {
-        await api(`/api/characters/${ch.id}`, { method: 'DELETE' });
+        try { await api(`/api/characters/${ch.id}`, { method: 'DELETE' }); } catch (e) { return toast(e.message); }
         S.chars.delete(ch.id);
-        S.enc.c.forEach(c => { if (c.charId === ch.id) c.charId = null; });   // keeps them in the fight as plain combatants
+        // keeps them in the fight as plain combatants, with the sheet's current numbers
+        const s = ch.sheet;
+        const inFight = S.enc.c.filter(c => c.charId === ch.id);
+        inFight.forEach(c => Object.assign(c, { charId: null, name: s.name, hp: s.hp, max: s.max_hp, temp: s.temp_hp || 0,
+          exh: s.exhaustion || 0, ac: ch.derived.ac, slots: JSON.parse(JSON.stringify(s.slots)) }));
+        if (inFight.length) saveEnc();
         S.currentChar = S.chars.keys().next().value ?? null;
         S.confirm.delChar = null;
       } else S.confirm.delChar = ch.id;
@@ -259,7 +264,9 @@ async function onSheetAction(a, ch) {
 
 export function initParty() {
   $('#newChar').onclick = async () => {
-    const res = await api('/api/characters', { method: 'POST', body: { sheet: { name: 'New character' } } });
+    let res;
+    try { res = await api('/api/characters', { method: 'POST', body: { sheet: { name: 'New character' } } }); }
+    catch (e) { return toast(`Could not create the character: ${e.message}`); }
     S.chars.set(res.id, res);
     S.currentChar = res.id;
     renderParty();

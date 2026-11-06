@@ -24,8 +24,10 @@ async function loadState() {
   for (const c of await api('/api/characters')) S.chars.set(c.id, c);
   const saved = await api('/api/encounter');
   if (saved && Array.isArray(saved.c)) {
-    saved.c.forEach(c => { delete c._editSlots; c.exh ??= 0; });   // older saves stored a UI flag here
+    // older saves: a UI flag stored here, fields that didn't exist yet
+    saved.c.forEach(c => { delete c._editSlots; c.exh ??= 0; c.conds ??= []; c.ds ??= { s: 0, f: 0 }; c.slots ??= []; });
     saved.ticks ??= [];
+    saved.prompts ??= [];
     S.enc = saved;
   }
 }
