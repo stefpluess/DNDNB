@@ -138,6 +138,19 @@ class SavedEncounters(TempData):
             server.update_saved(_Body({"name": "Gone", "creatures": [{"name": "Orc"}]}), {}, "99")
 
 
+class Rests(TempData):
+    def test_short_rest_through_the_api(self):
+        made = server.create_character(_Body({"sheet": {"name": "Vex", "class_name": "Fighter", "level": 3, "max_hp": 28, "hp": 5}}), {})
+        sheet = made["sheet"]
+        out = server.update_character(_Body({"sheet": sheet, "rest": "short", "hit_dice": 2}), {}, made["id"])
+        self.assertEqual(out["rest"]["rest"], "short")
+        self.assertEqual(len(out["rest"]["rolls"]), 2)
+        self.assertEqual(out["sheet"]["hit_dice_used"], 2)
+        self.assertGreater(out["sheet"]["hp"], 5)
+        out = server.update_character(_Body({"sheet": out["sheet"], "rest": "long"}), {}, made["id"])
+        self.assertEqual((out["sheet"]["hp"], out["sheet"]["hit_dice_used"]), (28, 0))
+
+
 class _Body:
     """Stands in for the request handler: only json_body() is used by handlers."""
 

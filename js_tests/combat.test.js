@@ -213,6 +213,16 @@ test('grappled and charmed attackers', () => {
   assert.deepEqual(R.attackHints(atk, other).map(h => h.mode), ['dis', null]);
 });
 
+test('Rage and Petrified grant defenses; Rage ends concentration', () => {
+  const b = mk({ conds: [{ n: 'Concentrating', d: null }] }), ctx = fight([b]);
+  assert.equal(R.defensesOf(b), null);
+  assert.match(R.addCondition(ctx, b, 'Raging').join(' '), /loses concentration/);
+  assert.deepEqual(['slashing', 'fire'].map(t => R.defenseMod(R.defensesOf(b), t)), ['resist', 'normal']);
+  const stone = mk({ def: { resist: [], vuln: ['bludgeoning'], immune: [], condImmune: [] }, conds: [{ n: 'Petrified', d: null }] });
+  assert.deepEqual(['fire', 'poison', 'bludgeoning'].map(t => R.defenseMod(R.defensesOf(stone), t)), ['resist', 'immune', 'resist+vuln']);
+  assert.match(R.addCondition(fight([stone]), stone, 'Poisoned').join(' '), /immune to Poisoned/);
+});
+
 // ---------- turns ----------
 
 test('turns go in initiative order and wrap into the next round', () => {

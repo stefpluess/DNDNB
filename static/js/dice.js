@@ -5,7 +5,7 @@
  * `nat` is the natural die for a single d20 (for crits and fumbles), otherwise null.
  * `rand` can be replaced in tests with a predictable source.
  */
-export function roll(expr, rand = Math.random) {
+export function roll(expr, rand = Math.random, { min = 0 } = {}) {
   const s = String(expr ?? '').replace(/\s+/g, '').toLowerCase().replace(/−/g, '-');
   if (!s) return null;
   const re = /([+-]?)(\d*d\d+|\d+)/g;
@@ -21,8 +21,10 @@ export function roll(expr, rand = Math.random) {
       if (n < 1 || n > 100 || f < 1) return null;
       const rolls = Array.from({ length: n }, () => 1 + Math.floor(rand() * f));
       if (n === 1 && f === 20) nat = rolls[0];
-      total += sign * rolls.reduce((a, b) => a + b, 0);
-      parts.push((sign < 0 ? '− ' : parts.length ? '+ ' : '') + `[${rolls.join(',')}]`);
+      // `min`: a die below it counts as it (Great Weapon Fighting: 1s and 2s count as 3)
+      const counted = rolls.map(r => Math.max(r, min));
+      total += sign * counted.reduce((a, b) => a + b, 0);
+      parts.push((sign < 0 ? '− ' : parts.length ? '+ ' : '') + `[${rolls.map((r, i) => (counted[i] !== r ? `${r}→${counted[i]}` : r)).join(',')}]`);
     } else {
       total += sign * +m[2];
       parts.push((sign < 0 ? '− ' : '+ ') + m[2]);

@@ -121,12 +121,20 @@ def update_character(req, _q, cid):
     if body.get("apply_slots"):
         for slot, n in zip(sheet["slots"], rules.default_slots(sheet.get("class_name") or "", sheet.get("level") or 1)):
             slot["max"], slot["used"] = n, min(slot["used"], n)
+    report = None
+    if body.get("rest") == "long":
+        report = rules.long_rest(sheet)
+    elif body.get("rest") == "short":
+        report = rules.short_rest(sheet, int(body.get("hit_dice") or 0))
     with db.campaign_session() as conn:
         cur = conn.execute("UPDATE characters SET name=?, data=?, updated=CURRENT_TIMESTAMP WHERE id=?",
                            (sheet.get("name") or "Unnamed", db.dumps(sheet), cid))
         if cur.rowcount == 0:
             raise ApiError("Character not found.", 404)
-    return get_character(req, {}, cid)
+    out = get_character(req, {}, cid)
+    if report:
+        out["rest"] = report
+    return out
 
 
 def delete_character(_req, _q, cid):

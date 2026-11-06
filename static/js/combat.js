@@ -357,6 +357,20 @@ export function monsterDefenses(m) {
   return d.resist.length || d.vuln.length || d.immune.length || d.condImmune.length || notes.length ? d : null;
 }
 
+/**
+ * A creature's defenses right now: its stat block's plus what its conditions grant (2024: Raging gives
+ * resistance to bludgeoning, piercing and slashing; Petrified gives resistance to all damage and
+ * immunity to poison and the Poisoned condition).
+ */
+export function defensesOf(c) {
+  const d = c.def || { resist: [], vuln: [], immune: [], condImmune: [] };
+  const add = (list, xs) => [...new Set([...list, ...xs])];
+  let out = d;
+  if (hasCond(c, 'Raging')) out = { ...out, resist: add(out.resist, ['bludgeoning', 'piercing', 'slashing']) };
+  if (hasCond(c, 'Petrified')) out = { ...out, resist: add(out.resist, DAMAGE_TYPES), immune: add(out.immune, ['poison']), condImmune: add(out.condImmune, ['poisoned']) };
+  return out === d && !c.def ? null : out;
+}
+
 /** How a creature with defenses `def` takes damage of `type`: 'immune', 'resist', 'vuln', 'resist+vuln' or 'normal'. */
 export function defenseMod(def, type) {
   const t = String(type || '').toLowerCase();
@@ -559,7 +573,7 @@ export const INCAPACITATING = ['Incapacitated', 'Paralyzed', 'Petrified', 'Stunn
  *   save      { ab, dc, when }: the bearer repeats a save at the 'end' (or 'start') of each of its turns.
  */
 export function addCondition(ctx, c, name, rounds, opts = {}) {
-  if (c.def?.condImmune?.includes(String(name).toLowerCase())) return [`${nameOf(ctx, c)} is immune to ${name}.`];
+  if (defensesOf(c)?.condImmune?.includes(String(name).toLowerCase())) return [`${nameOf(ctx, c)} is immune to ${name}.`];
   if (name === 'Exhaustion') return setExhaustion(ctx, c, exhaustion(ctx, c) + 1);
   const msgs = [];
   const d = rounds > 0 ? rounds : null;
@@ -580,7 +594,8 @@ export function addCondition(ctx, c, name, rounds, opts = {}) {
   if (opts.save?.ab && opts.save.dc > 0) cond.save = { ab: opts.save.ab, dc: +opts.save.dc, when: opts.save.when === 'start' ? 'start' : 'end' };
   const i = c.conds.findIndex(x => x.n === name);
   if (i >= 0) c.conds[i] = cond; else c.conds.push(cond);
-  if (INCAPACITATING.includes(name) && hasCond(c, 'Concentrating')) msgs.push(...endConcentration(ctx, c));
+  // Incapacitated ends concentration; so does Rage (a raging creature can't concentrate on spells)
+  if ((INCAPACITATING.includes(name) || name === 'Raging') && hasCond(c, 'Concentrating')) msgs.push(...endConcentration(ctx, c));
   return msgs;
 }
 

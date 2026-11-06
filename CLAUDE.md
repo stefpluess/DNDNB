@@ -87,7 +87,12 @@ Front end, `static/js/` (plain ES modules, no framework):
   one concentration spell at a time, monster resistances/immunities/condition immunities from the
   stat block (qualified 2014-style text is left to the DM), Paralyzed/Petrified/Stunned/Unconscious
   auto-fail Str and Dex saves and Restrained has Disadvantage on Dex saves, a Shield gives AC only
-  with Shield training, Monk Martial Arts, Unarmed Strike for everyone, Weapon Mastery by level.
+  with Shield training, Monk Martial Arts, Unarmed Strike for everyone, Weapon Mastery by level,
+  Short Rest (Hit Dice + Con, Warlock pact slots, short-rest resources) and Long Rest (all Hit Dice back)
+  in rules.py, class resources per level (RESOURCES), Jack of All Trades (skills only), Rage (damage,
+  B/P/S resistance via the Raging condition, ends concentration), Petrified resistances, Sneak Attack,
+  Divine Smite (+1d8 vs Fiend/Undead), Great Weapon / Thrown / Two-Weapon / Unarmed Fighting.
+- Not modeled: subclasses (sheets have a class only), multiclassing, feats.
 
 ## Next steps, in order
 1. Run `python import_srd.py` on the live data and fix whatever the sanity check reports.

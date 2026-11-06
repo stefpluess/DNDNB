@@ -3,7 +3,7 @@
 
 import { bindForm } from './forms.js';
 import { classLine, derivedHtml } from './sheetview.js';
-import { S, api, charOp, onCharSaved, scheduleCharSave } from './store.js';
+import { S, api, charOp, onCharSaved, onResourceEvent, scheduleCharSave } from './store.js';
 import { addChar } from './tracker.js';
 import { handleRollClick } from './ui.js';
 import { $, esc, label, ordinal, signed, toast, uid } from './util.js';
@@ -69,7 +69,8 @@ function renderSheet() {
   const chk = (list, value, text) => `<label><input type="checkbox" data-list="${list}" value="${value}" ${(list.split('.').reduce((o, k) => o?.[k], s) || []).includes(value) ? 'checked' : ''}> ${text}</label>`;
   const inv = inventoryRows(s);
   box.innerHTML = `
-  <div class="sec"><h3>${esc(s.name)} <span class="line"><button class="btn sm" data-sa="rest">Long rest</button><button class="btn sm" data-sa="tocombat">Add to combat</button></span></h3>
+  <div class="sec"><h3>${esc(s.name)} <span class="line"><label class="hint" title="Hit Dice to spend on the Short Rest">Spend <input class="field tiny" type="number" min="0" max="${ch.derived.hit_dice.left}" id="restDice" value="0"> of ${ch.derived.hit_dice.left} HD</label>
+    <button class="btn sm" data-sa="shortrest">Short rest</button><button class="btn sm" data-sa="rest">Long rest</button><button class="btn sm" data-sa="tocombat">Add to combat</button></span></h3>
     <div class="grid g4">
       <label class="lbl-f">Name ${txt('name', s.name, 'data-required')}</label><label class="lbl-f">Player ${txt('player', s.player)}</label>
       <label class="lbl-f">Race ${txt('race', s.race)}</label><label class="lbl-f">Class ${txt('class_name', s.class_name, 'list="classList"')}</label>
@@ -95,7 +96,7 @@ function renderSheet() {
       <label class="grow">Others <input class="field" id="f-otherweapons" data-special="otherweapons" value="${esc(p.weapons.filter(w => !BASE_WEAPONS.includes(w)).join(', '))}" placeholder="rapier, hand-crossbow"></label></div></div>
     <div class="blk"><h4>Skills <span class="hint">second box is expertise</span></h4><div class="skillgrid">${Object.entries(S.meta.skills).map(([k, a]) =>
       `<label><input type="checkbox" data-list="prof.skills" value="${k}" ${p.skills.includes(k) ? 'checked' : ''} aria-label="${label(k)} proficiency"><input type="checkbox" data-list="prof.expertise" value="${k}" ${p.expertise.includes(k) ? 'checked' : ''} aria-label="${label(k)} expertise"> ${label(k)}<span class="ab">${UP(a)}</span></label>`).join('')}</div></div>
-    <div class="blk"><h4>Fighting style</h4><div class="checks">${['archery', 'defense', 'dueling'].map(f => chk('styles', f, label(f))).join('')}</div></div>
+    <div class="blk"><h4>Fighting style</h4><div class="checks">${S.meta.fighting_styles.map(f => chk('styles', f, label(f) + (['great_weapon', 'thrown_weapon', 'two_weapon', 'unarmed'].includes(f) ? ' Fighting' : ''))).join('')}</div></div>
   </div>
   <div class="sec"><h3>Inventory <span class="line"><button class="link" data-sa="customitem">Add custom item</button></span></h3>
     <div class="itemsearch"><input class="field wide" type="search" id="itemSearch" placeholder="Search weapons, armor and magic items to add" autocomplete="off"><ul class="results" id="itemResults" hidden></ul></div>
@@ -125,10 +126,15 @@ async function onSheetAction(a, ch) {
       ch.sheet.inventory.push({ uid: uid(), name: 'Custom item', type: 'wondrous', equipped: true, bonus: 0, qty: 1, mods: {}, notes: '', attune: false, attuned: false });
       return charOp(ch.id);
     case 'rest':
-      Object.assign(ch.sheet, { hp: ch.sheet.max_hp, temp_hp: 0, exhaustion: Math.max(0, (+ch.sheet.exhaustion || 0) - 1) });
-      ch.sheet.slots.forEach(s => { s.used = 0; });
-      await charOp(ch.id);
-      return toast(`${ch.sheet.name} finished a long rest.`);
+      await charOp(ch.id, { rest: 'long' });
+      return toast(`${ch.sheet.name} finished a Long Rest: HP, Hit Dice, spell slots and class resources back; Exhaustion −1.`);
+    case 'shortrest': {
+      const n = parseInt($('#restDice')?.value, 10) || 0;
+      const { res } = await charOp(ch.id, { rest: 'short', hit_dice: n });
+      const r = res.rest;
+      return toast(`${ch.sheet.name} finished a Short Rest${r.rolls.length ? `: rolled ${r.rolls.join(', ')} on d${r.die} ${signed(r.con)} Con each, regained ${r.healed} HP` : ''}.`
+        + `${ch.sheet.class_name.toLowerCase() === 'warlock' ? ' Pact slots back.' : ''}`);
+    }
     case 'tocombat': {
       const r = addChar(ch.id);
       if (r) toast(`Added to combat with initiative ${r.split(' ').pop()}.`);
@@ -219,7 +225,11 @@ export function initParty() {
     const ul = $('#itemResults');
     if (ul && !e.target.closest('#sheet .itemsearch')) ul.hidden = true;
   });
-  $('#derived').addEventListener('click', handleRollClick);
+  $('#derived').addEventListener('click', e => {
+    if (onResourceEvent(e, current())) return renderDerived();
+    handleRollClick(e);
+  });
+  $('#derived').addEventListener('change', e => { if (onResourceEvent(e, current())) renderDerived(); });
 
   onCharSaved((id, { structural }) => {
     if (S.view !== 'party' || S.currentChar !== id) return;

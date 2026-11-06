@@ -21,6 +21,7 @@ Item shape in sheet["inventory"]:
 }
 """
 import math
+import random
 import re
 import uuid
 
@@ -54,6 +55,45 @@ MARTIAL_ARTS_DIE = [(1, "1d6"), (5, "1d8"), (11, "1d10"), (17, "1d12")]
 def _by_level(steps, level, default=0):
     """The value of the last (from level, value) step reached."""
     return next((v for lv, v in reversed(steps) if level >= lv), default)
+
+
+# Class resources (2024 class tables). recover: "long" (all back on a Long Rest), "short" (all back on a
+# Short Rest too), "short1" (one back on a Short Rest, all on a Long Rest). max is (from level, count) steps
+# or a function of (level, ability modifiers).
+RESOURCES = {
+    "barbarian": [("rage", "Rage", [(1, 2), (3, 3), (6, 4), (12, 5), (17, 6)], "short1")],
+    "bard": [("bardic_inspiration", "Bardic Inspiration", lambda lv, m: max(1, m["cha"]), lambda lv: "short" if lv >= 5 else "long")],
+    "cleric": [("channel_divinity", "Channel Divinity", [(2, 2), (6, 3), (18, 4)], "short1")],
+    "druid": [("wild_shape", "Wild Shape", [(2, 2), (6, 3), (17, 4)], "short1")],
+    "fighter": [("second_wind", "Second Wind", [(1, 2), (4, 3), (10, 4)], "short1"),
+                ("action_surge", "Action Surge", [(2, 1), (17, 2)], "short")],
+    "monk": [("focus", "Focus Points", lambda lv, m: lv if lv >= 2 else 0, "short")],
+    "paladin": [("lay_on_hands", "Lay on Hands (HP pool)", lambda lv, m: 5 * lv, "long"),
+                ("channel_divinity", "Channel Divinity", [(3, 2), (11, 3)], "short1")],
+    "ranger": [("favored_enemy", "Favored Enemy (free Hunter's Mark)", [(1, 2), (5, 3), (9, 4), (13, 5), (17, 6)], "long")],
+    "sorcerer": [("sorcery_points", "Sorcery Points", lambda lv, m: lv if lv >= 2 else 0, "long"),
+                 ("innate_sorcery", "Innate Sorcery", [(1, 2)], "long")],
+    "warlock": [("magical_cunning", "Magical Cunning", [(2, 1)], "long")],
+    "wizard": [("arcane_recovery", "Arcane Recovery", [(1, 1)], "long")],
+}
+RAGE_DAMAGE = [(1, 2), (9, 3), (16, 4)]
+BARDIC_DIE = [(1, "d6"), (5, "d8"), (10, "d10"), (15, "d12")]
+FIGHTING_STYLES = ["archery", "defense", "dueling", "great_weapon", "thrown_weapon", "two_weapon", "unarmed"]
+
+
+def class_resources(cls, level, m, used=None):
+    """[{key, name, max, used, recover, pool}] for a class at a level. pool: track as a number, not pips."""
+    out = []
+    for key, name, mx, rec in RESOURCES.get(cls, []):
+        n = mx(level, m) if callable(mx) else _by_level(mx, level)
+        if n <= 0:
+            continue
+        rec = rec(level) if callable(rec) else rec
+        if key == "bardic_inspiration":
+            name = f"{name} (1{_by_level(BARDIC_DIE, level)})"
+        u = max(0, min(n, int((used or {}).get(key, 0) or 0)))
+        out.append({"key": key, "name": name, "max": n, "used": u, "recover": rec, "pool": n > 9})
+    return out
 
 
 def mastery_slots(cls, level):
@@ -110,6 +150,7 @@ def blank_sheet(name="New character"):
         "exhaustion": 0,
         "styles": [], "spell_ability": None, "ac_misc": 0, "init_misc": 0,
         "slots": [{"max": 0, "used": 0} for _ in range(9)],
+        "hit_dice_used": 0, "resources_used": {},
         "inventory": [], "notes": "",
     }
 
@@ -127,6 +168,9 @@ def normalize(sheet):
         sheet["prof"][k] = sorted({skill_key(x) for x in sheet["prof"][k]})
     while len(sheet["slots"]) < 9:
         sheet["slots"].append({"max": 0, "used": 0})
+    if not isinstance(sheet.get("resources_used"), dict):
+        sheet["resources_used"] = {}
+    sheet["styles"] = [{"great-weapon": "great_weapon", "great weapon fighting": "great_weapon"}.get(x, x) for x in sheet["styles"]]
     for item in sheet["inventory"]:
         _repair_shield(item)
         item.setdefault("uid", new_uid())
@@ -176,6 +220,51 @@ def default_slots(class_name, level):
     for i, n in enumerate(table):
         out[i] = n
     return out
+
+
+# ---------- rests ----------
+
+def _con_mod(sheet):
+    return derive(sheet)["mods"]["con"]
+
+
+def long_rest(sheet):
+    """2024 Long Rest: all HP, all spent Hit Dice and spell slots back, temp HP gone, Exhaustion −1,
+    class resources reset."""
+    sheet = normalize(sheet)
+    sheet.update(hp=sheet["max_hp"], temp_hp=0, exhaustion=max(0, int(sheet.get("exhaustion") or 0) - 1),
+                 hit_dice_used=0, resources_used={})
+    for slot in sheet["slots"]:
+        slot["used"] = 0
+    return {"rest": "long"}
+
+
+def short_rest(sheet, spend=0, roll=None):
+    """2024 Short Rest: spend Hit Dice (each: roll + Con modifier, at least 0) to heal; Warlock pact slots
+    come back; "short" resources reset and "short1" resources regain one use. Returns a report."""
+    sheet = normalize(sheet)
+    roll = roll or (lambda faces: random.randint(1, faces))
+    cls, level = class_key(sheet), max(1, min(20, int(sheet.get("level") or 1)))
+    die = (CLASS_DEFAULTS.get(cls) or (None,) * 5)[4] or 8
+    left = level - int(sheet.get("hit_dice_used") or 0)
+    spend = max(0, min(int(spend or 0), left))
+    con = _con_mod(sheet)
+    rolls = [roll(die) for _ in range(spend)]
+    healed = sum(max(0, r + con) for r in rolls)
+    before = int(sheet.get("hp") or 0)
+    sheet["hp"] = min(int(sheet["max_hp"]), before + healed)
+    sheet["hit_dice_used"] = int(sheet.get("hit_dice_used") or 0) + spend
+    if cls == "warlock":
+        for slot in sheet["slots"]:
+            slot["used"] = 0
+    used = sheet["resources_used"]
+    m = derive(sheet)["mods"]
+    for r in class_resources(cls, level, m, used):
+        if r["recover"] == "short":
+            used[r["key"]] = 0
+        elif r["recover"] == "short1" and used.get(r["key"]):
+            used[r["key"]] = max(0, used[r["key"]] - 1)
+    return {"rest": "short", "die": die, "rolls": rolls, "con": con, "healed": sheet["hp"] - before}
 
 
 # ---------- items from SRD entries ----------
@@ -370,11 +459,14 @@ def derive(sheet):
 
     # skills
     skills = {}
+    jack = cls == "bard" and level >= 2     # Jack of All Trades: half PB (rounded down) to skills you lack
     for s, a in SKILLS.items():
         exp = s in prof["expertise"]
         p = s in prof["skills"] or exp
-        skills[s] = {"bonus": m[a] + (pb * 2 if exp else pb if p else 0) - pen, "ability": a,
+        skills[s] = {"bonus": m[a] + (pb * 2 if exp else pb if p else pb // 2 if jack else 0) - pen, "ability": a,
                      "proficient": p, "expertise": exp}
+        if jack and not p:
+            skills[s]["jack"] = True
     if armor and (armor.get("armor") or {}).get("stealth_dis"):
         skills["stealth"]["disadvantage"] = armor["name"]
     passive = 10 + skills["perception"]["bonus"] + pen   # passive scores aren't d20 Tests
@@ -395,6 +487,8 @@ def derive(sheet):
     # Martial melee weapons with Light) and Unarmed Strikes can use Dex and the Martial Arts die
     martial_arts = cls == "monk" and not armor and not shield
     ma_die = _by_level(MARTIAL_ARTS_DIE, level, "1d6") if martial_arts else None
+    rage = _by_level(RAGE_DAMAGE, level) if cls == "barbarian" else 0
+    sneak = f"{math.ceil(level / 2)}d6" if cls == "rogue" else None
     for item in weapons:
         w = item["weapon"]
         props = set(w.get("properties") or [])
@@ -436,7 +530,7 @@ def derive(sheet):
         entry = {
             "uid": item["uid"], "name": item["name"] + (f" +{magic}" if magic else ""),
             "equipped": bool(item.get("equipped")), "ability": ab, "proficient": proficient,
-            "to_hit": to_hit, "hit_parts": hit_parts,
+            "to_hit": to_hit, "hit_parts": hit_parts, "ranged": ranged,
             "damage_dice": dice, "damage_bonus": dmg_bonus, "damage_type": w.get("dtype", ""),
             "damage": f"{dice}{signed(dmg_bonus) if dmg_bonus else ''} {w.get('dtype', '')}".strip() if dice else "special",
             "dmg_parts": dmg_parts, "range": None, "versatile": None,
@@ -454,10 +548,33 @@ def derive(sheet):
             entry["note"] = "Not proficient"
         if monk_weapon:
             entry["note"] = "Monk weapon (Martial Arts)"
+        notes = []
+        if "great_weapon" in styles and not ranged and "two-handed" in props:
+            entry["gwf"] = True             # Great Weapon Fighting: damage dice 1 or 2 count as 3
+            notes.append("Great Weapon Fighting: 1s and 2s on damage dice count as 3")
+        if "thrown" in props and "thrown_weapon" in styles:
+            notes.append("Thrown Weapon Fighting: +2 damage when thrown")
+        if "light" in props:
+            notes.append("Light: extra attack with a different Light weapon as a Bonus Action, "
+                         + ("ability modifier to damage included (Two-Weapon Fighting)" if "two_weapon" in styles
+                            else "no ability modifier to its damage unless negative"))
+        if rage and ab == "str":
+            entry["rage"] = rage
+            notes.append(f"Rage: +{rage} damage while raging")
+        if sneak and ("finesse" in props or ranged):
+            entry["sneak"] = sneak
+        if notes:
+            entry["note"] = "; ".join(filter(None, [entry.get("note"), *notes]))
         attacks.append(entry)
     attacks.sort(key=lambda a: (not a["equipped"], a["name"]))
-    # everyone can make an Unarmed Strike: Str + PB to hit, 1 + Str bludgeoning (Monks: Martial Arts)
+    # everyone can make an Unarmed Strike: Str + PB to hit, 1 + Str bludgeoning (Monks: Martial Arts;
+    # Unarmed Fighting style: 1d6, or 1d8 holding no weapons or shield)
     ua = "dex" if martial_arts and m["dex"] > m["str"] else "str"
+    if "unarmed" in styles:
+        empty = not shield and not any(i.get("equipped") for i in weapons)
+        uf_die = "1d8" if empty else "1d6"
+        if _avg(uf_die) > _avg(ma_die):
+            ma_die = uf_die
     ua_hit = [(ABILITY_NAMES[ua], m[ua]), ("Proficiency", pb)] + ([("Exhaustion", -pen)] if pen else [])
     attacks.append({
         "uid": "unarmed", "name": "Unarmed Strike", "equipped": True, "ability": ua, "proficient": True,
@@ -467,7 +584,8 @@ def derive(sheet):
                    else f"{max(0, 1 + m[ua])} bludgeoning"),
         "dmg_parts": [(ABILITY_NAMES[ua], m[ua])] + ([] if ma_die else [("Unarmed", 1)]),
         "range": None, "versatile": None, "mastery": None, "mastery_known": False,
-        "note": "Martial Arts" if ma_die else "Or Grapple / Shove: DC 8 + Str + PB",
+        "note": ("Martial Arts" if martial_arts else "Unarmed Fighting") if ma_die else "Or Grapple / Shove: DC 8 + Str + PB",
+        **({"rage": rage} if rage and ua == "str" else {}),
     })
 
     # spellcasting
@@ -492,5 +610,10 @@ def derive(sheet):
         "saves": saves, "skills": skills, "attacks": attacks, "spell": spell,
         "attuned": attuned, "warnings": warnings,
         "suggested_slots": default_slots(sheet.get("class_name") or "", level),
+        "hit_dice": {"die": (CLASS_DEFAULTS.get(cls) or (None,) * 5)[4], "total": level,
+                     "left": max(0, level - int(sheet.get("hit_dice_used") or 0))},
+        "resources": class_resources(cls, level, m, sheet.get("resources_used")),
+        "rage_damage": rage, "sneak_attack": sneak,
+        "smite": cls == "paladin" and level >= 2,
         "hit_die": (CLASS_DEFAULTS.get(cls) or (None,) * 5)[4],
     }

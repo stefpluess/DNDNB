@@ -16,9 +16,9 @@ export function pushLog(lbl, r, cls = '') {
 }
 
 /** type: 'atk' | 'check' | 'dmg' | 'hp'. Shift-click on damage rolls a critical hit. */
-export function rollAndLog(lbl, expr, type, ev) {
+export function rollAndLog(lbl, expr, type, ev, min = 0) {
   if (type === 'dmg' && ev?.shiftKey) { expr = doubleDice(expr); lbl += ' (crit)'; }
-  const r = roll(expr);
+  const r = roll(expr, Math.random, { min });
   if (!r) return toast(`Can't roll "${expr}". Try something like 2d6+3.`);
   const d20Roll = type !== 'dmg' && type !== 'hp';
   const cls = d20Roll && r.nat === 20 ? 'crit' : d20Roll && r.nat === 1 ? 'fumble' : '';
@@ -29,7 +29,7 @@ export function rollAndLog(lbl, expr, type, ev) {
 export function handleRollClick(e) {
   const b = e.target.closest('[data-roll]');
   if (!b) return false;
-  rollAndLog(b.dataset.label, b.dataset.roll, b.dataset.type, e);
+  rollAndLog(b.dataset.label, b.dataset.roll, b.dataset.type, e, +b.dataset.min || 0);
   return true;
 }
 

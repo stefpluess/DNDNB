@@ -42,8 +42,8 @@ const rollBtn = (expr, type, lbl, text, title = '', attrs = '') =>
   `<button class="btn roll" data-roll="${esc(expr)}" data-type="${type}" data-label="${esc(lbl)}"${title ? ` title="${esc(title)}"` : ''}${attrs}>${esc(text)}</button>`;
 
 /** On a to-hit button: the attack's name and damage, so the tracker can roll it against a target. */
-export const attackAttrs = (feat, parts) =>
-  ` data-feat="${esc(feat)}" data-dmg="${esc(JSON.stringify(parts.filter(p => p.e)))}"`;
+export const attackAttrs = (feat, parts, extra = null) =>
+  ` data-feat="${esc(feat)}" data-dmg="${esc(JSON.stringify(parts.filter(p => p.e)))}"${extra ? ` data-extra="${esc(JSON.stringify(extra))}"` : ''}`;
 
 function featHtml(f, who) {
   const btns = [];

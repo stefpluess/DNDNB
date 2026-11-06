@@ -88,6 +88,24 @@ function charSaver(id) {
   }
   return charSavers.get(id);
 }
+/**
+ * A resource pip (data-res, data-p) or pool box (data-respool) on a sheet changed: update
+ * sheet.resources_used and save. Returns true if the event was one of those.
+ */
+export function onResourceEvent(e, ch) {
+  const pip = e.target.closest('[data-res]'), pool = e.target.closest('[data-respool]');
+  if (!ch || !(pip || pool)) return false;
+  const key = (pip || pool).dataset.res || pool.dataset.respool;
+  const r = ch.derived.resources.find(x => x.key === key);
+  if (!r) return false;
+  const used = ch.sheet.resources_used ||= {};
+  if (pip) { const p = +pip.dataset.p; used[key] = p < r.max - r.used ? r.used + 1 : Math.max(0, r.used - 1); }
+  else used[key] = Math.max(0, Math.min(r.max, r.max - (parseInt(pool.value, 10) || 0)));
+  r.used = used[key];
+  charSaver(ch.id).schedule();
+  return true;
+}
+
 /** Save a character after typing pauses. */
 export const scheduleCharSave = id => charSaver(id).schedule();
 /** Save now, optionally asking the server to apply something ({ apply_class_defaults: true }). */

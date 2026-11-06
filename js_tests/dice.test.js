@@ -40,3 +40,8 @@ test('damage boxes take plain numbers, sums and dice', () => {
   assert.deepEqual([r.total, r.rolled], [12, true]);
   for (const bad of ['', '0', '3-5', 'lots']) assert.equal(parseAmount(bad), null, bad);
 });
+
+test('a minimum per die (Great Weapon Fighting)', () => {
+  const r = roll('2d6+3', faces(6, 1, 5), { min: 3 });
+  assert.deepEqual([r.total, r.detail], [11, '[1→3,5] + 3']);
+});

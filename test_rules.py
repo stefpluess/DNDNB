@@ -28,6 +28,8 @@ SCIMITAR = weapon("scimitar", "Scimitar", "1d6", "Slashing", False, [prop("Fines
 LONGBOW = weapon("longbow", "Longbow", "1d8", "Piercing", False,
                  [prop("Ammunition", "Range 150/600; Arrow"), prop("Heavy"), prop("Two-Handed"), prop("Slow", mastery=True)], 150, 600)
 QUARTERSTAFF = weapon("quarterstaff", "Quarterstaff", "1d6", "Bludgeoning", True, [prop("Versatile", "1d8"), prop("Topple", mastery=True)])
+GREATSWORD = weapon("greatsword", "Greatsword", "2d6", "Slashing", False, [prop("Heavy"), prop("Two-Handed"), prop("Graze", mastery=True)])
+HANDAXE = weapon("handaxe", "Handaxe", "1d6", "Slashing", True, [prop("Light"), prop("Thrown", "Range 20/60"), prop("Vex", mastery=True)], 20, 60)
 PLATE = armor("plate-armor", "Plate Armor", "heavy", 18, strength=15)
 HALF_PLATE = armor("half-plate-armor", "Half Plate Armor", "medium", 15, dex=True, cap=2)
 # Open5e really labels the Shield's armor category "heavy" (base AC 2); the rules must still see a shield
@@ -232,6 +234,72 @@ class Rules(unittest.TestCase):
         self.assertEqual(rules.derive(s)["skills"]["stealth"]["disadvantage"], "Plate Armor")
         s["inventory"] = []
         self.assertNotIn("disadvantage", rules.derive(s)["skills"]["stealth"])
+
+    def test_long_rest(self):
+        s = fighter()
+        s.update(hp=3, temp_hp=5, exhaustion=2, hit_dice_used=4, resources_used={"second_wind": 2})
+        s["slots"][0].update(max=2, used=2)
+        rules.long_rest(s)
+        self.assertEqual((s["hp"], s["temp_hp"], s["exhaustion"], s["hit_dice_used"], s["resources_used"], s["slots"][0]["used"]),
+                         (s["max_hp"], 0, 1, 0, {}, 0))
+
+    def test_short_rest_hit_dice_and_resources(self):
+        s = fighter(con=14)                                   # level 5, d10, Con +2
+        s.update(max_hp=44, hp=10, hit_dice_used=3, resources_used={"second_wind": 3, "action_surge": 1})
+        rep = rules.short_rest(s, spend=5, roll=lambda faces: 4)     # only 2 Hit Dice left
+        self.assertEqual((rep["rolls"], rep["healed"], s["hp"], s["hit_dice_used"]), ([4, 4], 12, 22, 5))
+        self.assertEqual(s["resources_used"], {"second_wind": 2, "action_surge": 0})   # one Second Wind back, Action Surge all
+        w = rules.blank_sheet()
+        w.update(class_name="Warlock", level=5)
+        w["slots"][2].update(max=2, used=2)
+        rules.short_rest(w)
+        self.assertEqual(w["slots"][2]["used"], 0)            # pact slots come back on a Short Rest
+
+    def test_class_resources(self):
+        m = {"cha": 3}
+        self.assertEqual([(r["key"], r["max"], r["recover"]) for r in rules.class_resources("barbarian", 6, m)], [("rage", 4, "short1")])
+        bard = rules.class_resources("bard", 5, m)[0]
+        self.assertEqual((bard["max"], bard["recover"], bard["name"]), (3, "short", "Bardic Inspiration (1d8)"))
+        self.assertEqual(rules.class_resources("bard", 4, m)[0]["recover"], "long")
+        self.assertEqual([r["key"] for r in rules.class_resources("fighter", 1, m)], ["second_wind"])   # Action Surge from 2
+        loh = rules.class_resources("paladin", 4, m)[0]
+        self.assertEqual((loh["max"], loh["pool"]), (20, True))
+        self.assertEqual(rules.class_resources("monk", 1, m), [])                                          # Focus from 2
+
+    def test_jack_of_all_trades(self):
+        b = rules.blank_sheet()
+        b.update(class_name="Bard", level=5)                  # PB 3: half is 1
+        b["prof"]["skills"] = ["performance"]
+        d = rules.derive(b)
+        self.assertEqual((d["skills"]["arcana"]["bonus"], d["skills"]["performance"]["bonus"], d["initiative"]), (1, 3, 0))
+        b["level"] = 1
+        self.assertEqual(rules.derive(b)["skills"]["arcana"]["bonus"], 0)
+
+    def test_fighting_styles_rage_and_sneak_attack(self):
+        s = fighter()
+        s["styles"] = ["great_weapon", "thrown_weapon", "two_weapon"]
+        s["inventory"] = [eq("equipment", GREATSWORD), eq("equipment", HANDAXE, equipped=False)]
+        atk = {a["name"]: a for a in rules.derive(s)["attacks"]}
+        self.assertTrue(atk["Greatsword"]["gwf"])
+        self.assertIn("Thrown Weapon Fighting: +2", atk["Handaxe"]["note"])
+        self.assertIn("ability modifier to damage included", atk["Handaxe"]["note"])
+        s["class_name"], s["level"] = "Barbarian", 9
+        atk = {a["name"]: a for a in rules.derive(s)["attacks"]}
+        self.assertEqual((atk["Greatsword"]["rage"], atk["Unarmed Strike"]["rage"]), (3, 3))
+        r = rules.blank_sheet()
+        r.update(class_name="Rogue", level=5)
+        rules.apply_class_defaults(r)
+        r["inventory"] = [eq("equipment", RAPIER), eq("equipment", LONGSWORD)]
+        atk = {a["name"]: a for a in rules.derive(r)["attacks"]}
+        self.assertEqual((atk["Rapier"].get("sneak"), atk["Longsword"].get("sneak")), ("3d6", None))
+
+    def test_unarmed_fighting(self):
+        s = fighter()
+        s["styles"] = ["unarmed"]
+        ua = lambda: next(a for a in rules.derive(s)["attacks"] if a["name"] == "Unarmed Strike")
+        self.assertEqual(ua()["damage"], "1d8+3 bludgeoning")
+        s["inventory"] = [eq("equipment", GREATSWORD)]
+        self.assertEqual(ua()["damage"], "1d6+3 bludgeoning")
 
     def test_shield_saved_before_the_fix_is_repaired(self):
         s = fighter(dex=14)
