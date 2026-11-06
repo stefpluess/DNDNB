@@ -1,12 +1,12 @@
 // Combat rules for the tracker (D&D 2024). DOM-free so it can be tested in Node.
 //
 // Functions take a context `ctx = { enc, linked(c) }`:
-//   enc        the encounter: { round, active, skip, c: [combatants], ticks: [] }
+//   enc        the encounter: { round, active, acted: [ids], skip, c: [combatants], ticks: [] }
 //   linked(c)  the character ({ sheet, derived }) a PC combatant is linked to, or null
 // They change the encounter (and linked sheets) in place and return messages to show the DM.
 //
 // A combatant: { id, name, kind: 'pc'|'foe'|'ally', init, mod, seq, ac, hp, max, temp, exh,
-//                conds: [{ n, d }], slots: [{max, used}], ds: { s, f }, ref?, charId?, notes }
+//                conds: [{ n, d, src?, at?, fresh? }], slots: [{max, used}], ds: { s, f }, ref?, charId?, notes }
 
 // ---------- reading a combatant (PCs read HP, AC, slots and Exhaustion from their sheet) ----------
 
@@ -27,23 +27,74 @@ export const hasCond = (c, n) => c.conds.some(x => x.n === n);
 export const concentrationDC = damage => Math.min(30, Math.max(10, Math.floor(damage / 2)));
 
 // ---------- turn order ----------
+//
+// enc.acted lists who has already taken their turn this round, so editing someone's initiative or adding
+// a creature mid-round never makes anyone act twice or lose a turn. Each Next turn saves a snapshot in
+// enc.ticks so Previous turn can put back the turn, the round and every condition timer.
 
 export const sorted = enc => [...enc.c].sort((a, b) => b.init - a.init || b.mod - a.mod || a.seq - b.seq);
 export const skippable = (ctx, c) => ctx.enc.skip && c.kind !== 'pc' && hp(ctx, c) <= 0;
 
-/** Count down condition durations at the end of a creature's turn. */
-export function tickEnd(ctx, c) {
-  const gone = [];
-  c.conds = c.conds.filter(x => {
-    if (x.d > 0 && --x.d === 0) { gone.push(x.n); return false; }
-    return true;
-  });
-  return gone.length ? [`${nameOf(ctx, c)}: ${gone.join(', ')} ended.`] : [];
+/** Who has gone this round. Encounters saved before enc.acted existed: everyone above the active creature. */
+export function actedIds(enc) {
+  if (!enc.active) return [];
+  if (!Array.isArray(enc.acted)) {
+    const L = sorted(enc);
+    enc.acted = L.slice(0, Math.max(0, L.findIndex(c => c.id === enc.active))).map(c => c.id);
+  }
+  return enc.acted;
 }
+
+/** A combatant's place in the round: 'now', 'done' (already acted), 'next' (still to come) or null outside combat. */
+export function turnState(enc, c) {
+  if (!enc.active) return null;
+  if (c.id === enc.active) return 'now';
+  return actedIds(enc).includes(c.id) ? 'done' : 'next';
+}
+
+const condLabel = (ctx, x) => {
+  const src = x.src && ctx.enc.c.find(c => c.id === x.src);
+  return src ? `${x.n} (from ${nameOf(ctx, src)})` : x.n;
+};
+
+/**
+ * Count down condition timers when `who`'s turn hits `at` ('start' or 'end'). A timer without a source
+ * counts down at the end of its bearer's own turn; one with a source counts down on the source's turn.
+ */
+export function tick(ctx, who, at) {
+  const msgs = [];
+  for (const c of ctx.enc.c) {
+    const gone = [];
+    c.conds = c.conds.filter(x => {
+      const owner = x.src || c.id, when = x.src ? (x.at || 'end') : 'end';
+      if (owner !== who.id || when !== at || !(x.d > 0)) return true;
+      if (x.fresh) { delete x.fresh; return true; }
+      if (--x.d === 0) { gone.push(condLabel(ctx, x)); return false; }
+      return true;
+    });
+    if (gone.length) msgs.push(`${nameOf(ctx, c)}: ${gone.join(', ')} ended.`);
+  }
+  return msgs;
+}
+/** Kept for callers that only tick a creature's own conditions at the end of its turn. */
+export const tickEnd = (ctx, c) => tick(ctx, c, 'end');
+
+const snapshot = enc => ({
+  id: enc.active, round: enc.round, acted: [...actedIds(enc)],
+  conds: Object.fromEntries(enc.c.map(c => [c.id, JSON.parse(JSON.stringify(c.conds))])),
+});
+
+function dyingNote(ctx) {
+  const cur = ctx.enc.c.find(c => c.id === ctx.enc.active);
+  return cur && cur.kind === 'pc' && hp(ctx, cur) <= 0 ? [`${nameOf(ctx, cur)} is dying: roll a death save.`] : [];
+}
+
+/** The first creature in initiative order that hasn't acted this round and isn't skipped. */
+const nextUp = (ctx, acted) => sorted(ctx.enc).find(c => !acted.includes(c.id) && !skippable(ctx, c));
 
 /**
  * Move the turn forward (dir 1) or back (dir -1). Starting combat is step(ctx, 1) with no active turn.
- * Back restores the durations that the matching Next counted down.
+ * Back restores the turn, round and condition timers from before the matching Next.
  */
 export function step(ctx, dir) {
   const { enc } = ctx;
@@ -52,58 +103,94 @@ export function step(ctx, dir) {
   if (!L.length) return msgs;
   enc.ticks ||= [];
   if (!enc.active) {
-    enc.active = (L.find(c => !skippable(ctx, c)) || L[0]).id;
     enc.round = 1;
+    enc.acted = [];
     enc.ticks = [];
+    enc.active = (nextUp(ctx, []) || L[0]).id;
+    msgs.push(...tick(ctx, enc.c.find(c => c.id === enc.active), 'start'));
+    return [...msgs, ...dyingNote(ctx)];
+  }
+  if (dir > 0) {
+    const cur = enc.c.find(c => c.id === enc.active);
+    enc.ticks.push(snapshot(enc));
+    if (enc.ticks.length > 100) enc.ticks.shift();
+    msgs.push(...tick(ctx, cur, 'end'));
+    const acted = [...actedIds(enc), cur.id];
+    let nx = nextUp(ctx, acted);
+    if (nx) enc.acted = acted;
+    else { enc.round++; enc.acted = []; nx = nextUp(ctx, []) || cur; }
+    enc.active = nx.id;
+    msgs.push(...tick(ctx, nx, 'start'));
+    return [...msgs, ...dyingNote(ctx)];
+  }
+  // back
+  let snap;
+  while ((snap = enc.ticks.pop()) && (!snap.acted || !enc.c.some(c => c.id === snap.id)));
+  if (snap) {
+    enc.active = snap.id;
+    enc.round = snap.round;
+    enc.acted = snap.acted.filter(id => enc.c.some(c => c.id === id));
+    for (const c of enc.c) if (snap.conds[c.id]) c.conds = snap.conds[c.id];
   } else {
+    // no history (an older save): step back in initiative order without touching timers
     let i = L.findIndex(c => c.id === enc.active);
-    if (dir > 0 && i >= 0) {
-      enc.ticks.push({ id: L[i].id, conds: JSON.parse(JSON.stringify(L[i].conds)) });
-      if (enc.ticks.length > 200) enc.ticks.shift();
-      msgs.push(...tickEnd(ctx, L[i]));
-    }
     for (let n = 0; n < L.length; n++) {
-      i += dir;
-      if (i >= L.length) { i = 0; enc.round++; }
+      i--;
       if (i < 0) { i = L.length - 1; enc.round = Math.max(1, enc.round - 1); }
       if (!skippable(ctx, L[i])) break;
     }
     enc.active = L[i].id;
-    const last = enc.ticks[enc.ticks.length - 1];
-    if (dir < 0 && last && last.id === enc.active) { L[i].conds = last.conds; enc.ticks.pop(); }
+    enc.acted = L.slice(0, i).map(c => c.id);
   }
-  const cur = enc.c.find(c => c.id === enc.active);
-  if (cur && cur.kind === 'pc' && hp(ctx, cur) <= 0) msgs.push(`${nameOf(ctx, cur)} is dying: roll a death save.`);
-  return msgs;
+  return dyingNote(ctx);
 }
 
+/** Who goes after `id`: the rest of this round first, then the top of the next round. */
 export function nextAfter(ctx, id) {
-  const L = sorted(ctx.enc).filter(c => !skippable(ctx, c) || c.id === id);
-  const i = L.findIndex(c => c.id === id);
-  return L.length > 1 ? L[(i + 1) % L.length] : null;
+  const { enc } = ctx;
+  const acted = [...actedIds(enc), id];
+  const nx = nextUp(ctx, acted) || sorted(enc).find(c => !skippable(ctx, c) && c.id !== id);
+  return nx && nx.id !== id ? nx : null;
 }
 
 export function endCombat(enc) {
   enc.active = null;
   enc.round = 1;
+  enc.acted = [];
   enc.ticks = [];
 }
 
-/** Remove combatants; if the one whose turn it is goes, the turn passes to the next one in order. */
+/**
+ * A creature joined a fight in progress. If its initiative is above the creature whose turn it is,
+ * its turn this round has already passed, so it starts acting next round.
+ * Returns true when it has to wait for the next round.
+ */
+export function joinCombat(ctx, c) {
+  const { enc } = ctx;
+  if (!enc.active || c.id === enc.active) return false;
+  const L = sorted(enc);
+  const waits = L.findIndex(x => x.id === c.id) < L.findIndex(x => x.id === enc.active);
+  if (waits) enc.acted = [...actedIds(enc), c.id];
+  return waits;
+}
+
+/**
+ * Remove combatants. If the one whose turn it is goes, the turn passes to the next one in order.
+ * Conditions they were the source of now count down on their bearer's own turn instead.
+ */
 export function removeCombatants(ctx, ids) {
   const { enc } = ctx;
   const gone = new Set(ids);
-  const L = sorted(enc);
+  const acted = actedIds(enc).filter(id => !gone.has(id));
   if (enc.active && gone.has(enc.active)) {
-    const i = L.findIndex(x => x.id === enc.active);
-    let next = null;
-    for (let k = 1; k < L.length; k++) {
-      const c = L[(i + k) % L.length];
-      if (!gone.has(c.id) && !skippable(ctx, c)) { next = c; if (i + k >= L.length) enc.round++; break; }
-    }
+    const left = { ...ctx, enc: { ...enc, c: enc.c.filter(x => !gone.has(x.id)) } };
+    let next = nextUp(left, acted);
+    if (!next) { next = nextUp(left, []); if (next) { enc.round++; acted.length = 0; } }
     enc.active = next ? next.id : null;
   }
   enc.c = enc.c.filter(x => !gone.has(x.id));
+  enc.acted = enc.active ? acted : [];
+  for (const c of enc.c) for (const x of c.conds) if (x.src && gone.has(x.src)) { delete x.src; delete x.at; delete x.fresh; }
   enc.ticks = (enc.ticks || []).filter(t => !gone.has(t.id));
 }
 
@@ -192,12 +279,24 @@ export function deathSave(ctx, c, die) {
 
 // ---------- conditions ----------
 
-/** Add a condition (or reset its duration). Adding Exhaustion raises its level instead. */
-export function addCondition(ctx, c, name, rounds) {
+/**
+ * Add a condition (or reset its duration). Adding Exhaustion raises its level instead.
+ * `opts.src` is the creature whose turn the timer counts down on (default: the bearer's own turn end),
+ * `opts.at` is 'end' or 'start' of that turn. A timer set during its source's own turn skips that
+ * turn's end, so "until the end of your next turn" lasts through the next turn.
+ */
+export function addCondition(ctx, c, name, rounds, opts = {}) {
   if (name === 'Exhaustion') return setExhaustion(ctx, c, exhaustion(ctx, c) + 1);
   const d = rounds > 0 ? rounds : null;
-  const existing = c.conds.find(x => x.n === name);
-  if (existing) existing.d = d; else c.conds.push({ n: name, d });
+  const src = opts.src && opts.src !== c.id && ctx.enc.c.some(x => x.id === opts.src) ? opts.src : null;
+  const cond = { n: name, d };
+  if (d && src) {
+    cond.src = src;
+    cond.at = opts.at === 'start' ? 'start' : 'end';
+    if (cond.at === 'end' && ctx.enc.active === src) cond.fresh = true;
+  }
+  const i = c.conds.findIndex(x => x.n === name);
+  if (i >= 0) c.conds[i] = cond; else c.conds.push(cond);
   return [];
 }
 

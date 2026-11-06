@@ -6,7 +6,7 @@ import { toast } from './util.js';
 export const S = {
   meta: null,                 // lists from /api/meta: abilities, skills, classes, conditions, ...
   srdCounts: {},
-  enc: { round: 1, active: null, skip: true, c: [], ticks: [] },
+  enc: { round: 1, active: null, acted: [], skip: true, c: [], ticks: [] },
   chars: new Map(),           // id -> { id, sheet, derived }
   entryCache: new Map(),      // "kind:idx" -> reference entry
   view: 'combat',

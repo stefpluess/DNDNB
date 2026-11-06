@@ -156,6 +156,77 @@ test('removing the active creature passes the turn onward', () => {
   assert.equal(ctx.enc.active, null);
 });
 
+test('turn state shows who has acted, who is up and who is still to come', () => {
+  const ctx = fight([mk({ name: 'A', init: 20 }), mk({ name: 'B', init: 15 }), mk({ name: 'C', init: 10 })]);
+  const states = () => R.sorted(ctx.enc).map(c => R.turnState(ctx.enc, c));
+  assert.deepEqual(states(), [null, null, null]);
+  R.step(ctx, 1); R.step(ctx, 1);
+  assert.deepEqual(states(), ['done', 'now', 'next']);
+  R.step(ctx, 1); R.step(ctx, 1);                     // new round: nobody has acted yet
+  assert.deepEqual(states(), ['now', 'next', 'next']);
+});
+
+test('changing initiative mid-round never skips a turn or gives a second one', () => {
+  const a = mk({ name: 'A', init: 20 }), b = mk({ name: 'B', init: 15 }), c = mk({ name: 'C', init: 10 });
+  const ctx = fight([a, b, c]);
+  R.step(ctx, 1); R.step(ctx, 1);                     // A went, B is up
+  c.init = 25;                                        // C moves above everyone but hasn't gone yet
+  R.step(ctx, 1);
+  assert.deepEqual([activeName(ctx), ctx.enc.round], ['C', 1]);
+  a.init = 5;                                         // A already went: moving it down doesn't give it another turn
+  R.step(ctx, 1);
+  assert.deepEqual([activeName(ctx), ctx.enc.round], ['C', 2]);
+});
+
+test('a creature joining above the current turn waits for the next round', () => {
+  const ctx = fight([mk({ name: 'A', init: 20 }), mk({ name: 'B', init: 10 })]);
+  R.step(ctx, 1); R.step(ctx, 1);                     // B is up
+  const early = mk({ name: 'early', init: 18 }), late = mk({ name: 'late', init: 5 });
+  ctx.enc.c.push(early, late);
+  assert.equal(R.joinCombat(ctx, early), true);
+  assert.equal(R.joinCombat(ctx, late), false);
+  assert.equal(R.nextAfter(ctx, ctx.enc.active).name, 'late');
+  R.step(ctx, 1); R.step(ctx, 1);
+  assert.deepEqual([activeName(ctx), ctx.enc.round], ['A', 2]);
+  R.step(ctx, 1);
+  assert.equal(activeName(ctx), 'early');
+});
+
+test("a timer tied to another creature counts down on that creature's turn", () => {
+  const wiz = mk({ name: 'Wizard', init: 20 }), orc = mk({ name: 'Orc', init: 10 });
+  const ctx = fight([wiz, orc]);
+  R.step(ctx, 1);                                     // the Wizard's turn: it frightens the Orc until the end of its next turn
+  R.addCondition(ctx, orc, 'Frightened', 1, { src: wiz.id, at: 'end' });
+  R.step(ctx, 1);                                     // end of this Wizard turn doesn't count
+  assert.deepEqual(orc.conds.map(x => x.n), ['Frightened']);
+  R.step(ctx, 1);                                     // the Orc's own turn end doesn't count either
+  assert.deepEqual(orc.conds.map(x => x.n), ['Frightened']);
+  const msgs = R.step(ctx, 1);                        // end of the Wizard's next turn: it ends
+  assert.deepEqual(orc.conds, []);
+  assert.match(msgs.join(' '), /Orc: Frightened \(from Wizard\) ended/);
+  R.step(ctx, -1);                                    // Back puts it back
+  assert.deepEqual(orc.conds.map(x => x.n), ['Frightened']);
+});
+
+test("a timer can end at the start of its source's turn", () => {
+  const pal = mk({ name: 'Paladin', init: 20 }), orc = mk({ name: 'Orc', init: 10 });
+  const ctx = fight([pal, orc]);
+  R.step(ctx, 1);
+  R.addCondition(ctx, orc, 'Prone', 1, { src: pal.id, at: 'start' });
+  R.step(ctx, 1);
+  assert.deepEqual(orc.conds.map(x => x.n), ['Prone']);
+  R.step(ctx, 1);                                     // start of the Paladin's next turn
+  assert.deepEqual(orc.conds, []);
+});
+
+test("removing a timer's source moves the timer to its bearer's own turn", () => {
+  const wiz = mk({ name: 'Wizard', init: 20 }), orc = mk({ name: 'Orc', init: 10 });
+  const ctx = fight([wiz, orc]);
+  R.addCondition(ctx, orc, 'Frightened', 2, { src: wiz.id });
+  R.removeCombatants(ctx, [wiz.id]);
+  assert.deepEqual(orc.conds, [{ n: 'Frightened', d: 2 }]);
+});
+
 // ---------- names ----------
 
 test('group names number creatures and never repeat a number', () => {

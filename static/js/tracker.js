@@ -33,7 +33,16 @@ function hpState(c) {
   const r = R.hp(ctx, c) / R.maxHp(ctx, c);
   return r > 0.5 ? 'good' : r > 0.25 ? 'mid' : 'bad';
 }
-const chipHtml = (x, i) => `<button class="chip ${x.n === 'Concentrating' ? 'conc' : ''}" data-a="rmcond" data-i="${i}" title="Remove ${esc(x.n)}">${esc(x.n)}${x.d ? ` <b>${x.d}r</b>` : ''}<span aria-hidden="true">×</span></button>`;
+/** "until the end of Mira's turn" for a timer tied to another creature, or '' */
+function timerSource(x) {
+  const src = x.src && S.enc.c.find(c => c.id === x.src);
+  return src ? { name: R.nameOf(ctx, src), at: x.at === 'start' ? 'start' : 'end' } : null;
+}
+function chipHtml(x, i) {
+  const src = x.d ? timerSource(x) : null;
+  const when = x.d ? (src ? `${x.d} round${x.d > 1 ? 's' : ''}, counting down at the ${src.at} of ${src.name}'s turn` : `${x.d} round${x.d > 1 ? 's' : ''}, counting down at the end of its own turn`) : 'until removed';
+  return `<button class="chip ${x.n === 'Concentrating' ? 'conc' : ''}" data-a="rmcond" data-i="${i}" title="${esc(x.n)}: ${esc(when)}. Click to remove.">${esc(x.n)}${x.d ? ` <b>${x.d}r</b>` : ''}${src ? `<small class="src">${src.at} of ${esc(src.name)}</small>` : ''}<span aria-hidden="true">×</span></button>`;
+}
 function chipsHtml(c) {
   const exh = R.exhaustion(ctx, c);
   const exhChip = exh ? `<button class="chip exh" data-a="exhdown" title="Click to remove one level">Exhaustion ${exh} <b>−${2 * exh}</b><span aria-hidden="true">×</span></button>` : '';
@@ -42,11 +51,13 @@ function chipsHtml(c) {
 
 function rowHtml(c) {
   const v = R.vit(ctx, c), hp = R.hp(ctx, c), max = R.maxHp(ctx, c), temp = R.tempHp(ctx, c);
-  const classes = [`cb k-${c.kind}`, c.id === S.enc.active && 'is-active', S.sel?.type === 'c' && S.sel.id === c.id && 'sel', hp <= 0 && 'is-down'].filter(Boolean).join(' ');
+  const turn = R.turnState(S.enc, c);
+  const classes = [`cb k-${c.kind}`, c.id === S.enc.active && 'is-active', turn === 'done' && 'is-done', S.sel?.type === 'c' && S.sel.id === c.id && 'sel', hp <= 0 && 'is-down'].filter(Boolean).join(' ');
   const tag = hp <= 0 ? (c.kind === 'pc' ? 'Dying' : 'Down') : KIND[c.kind];
+  const turnTag = turn === 'now' ? '<span class="turn now">Their turn</span>' : turn === 'done' ? '<span class="turn done" title="Already acted this round, or joined after its initiative had passed">✓ Acted</span>' : '';
   return `<div class="${classes}" data-id="${c.id}">
     <input class="field init" type="number" id="init-${c.id}" data-f="init" value="${c.init}" aria-label="Initiative for ${esc(v.name)}">
-    <div class="who"><div class="top-line"><span class="nm">${esc(v.name)}</span><span class="tag">${tag}</span></div>${chipsHtml(c)}</div>
+    <div class="who"><div class="top-line"><span class="nm">${esc(v.name)}</span>${turnTag}<span class="tag">${tag}</span></div>${chipsHtml(c)}</div>
     <span class="ac" title="Armor Class"><b>${v.ac}</b><small>AC</small></span>
     <div class="hp ${hpState(c)}"><div class="meter"><i style="width:${Math.max(0, Math.min(100, hp / max * 100))}%"></i>${temp ? `<em style="width:${Math.min(100, temp / max * 100)}%"></em>` : ''}</div>
       <span class="num">${hp}<small>/${max}</small>${temp ? ` <span class="tmp">+${temp}</span>` : ''}</span></div>
@@ -60,9 +71,10 @@ export function renderTracker() {
   const cur = S.enc.c.find(c => c.id === S.enc.active);
   if (S.enc.active && !cur) S.enc.active = null;
   $('#round').textContent = S.enc.active ? S.enc.round : '–';
-  $('#turnName').textContent = cur ? R.nameOf(ctx, cur) : 'Combat not started';
+  $('#turnName').textContent = cur ? `${R.nameOf(ctx, cur)}'s turn` : 'Combat not started';
   const nx = cur && R.nextAfter(ctx, cur.id);
-  $('#onDeck').textContent = cur ? (nx ? `On deck: ${R.nameOf(ctx, nx)}` : 'Only one combatant')
+  const left = cur ? L.filter(c => R.turnState(S.enc, c) === 'next' && !R.skippable(ctx, c)).length : 0;
+  $('#onDeck').textContent = cur ? (nx ? `On deck: ${R.nameOf(ctx, nx)} · ${left ? `${left} more to act this round` : 'last turn of the round'}` : 'Only one combatant')
     : L.length ? `${L.length} combatant${L.length > 1 ? 's' : ''} ready.` : 'Add monsters from the library and your party from the Party tab.';
   $('#nextBtn').textContent = S.enc.active ? 'Next turn' : 'Start combat';
   $('#nextBtn').disabled = !L.length;
@@ -120,6 +132,17 @@ export async function renderInspector() {
   } catch (e) { box.innerHTML = `<p class="hint">${esc(e.message)}</p>`; }
 }
 
+/** Choices for when a new condition's rounds count down. Defaults to the turn of whoever is acting now. */
+function whenOptions(c) {
+  const others = R.sorted(S.enc).filter(x => x.id !== c.id);
+  const def = S.enc.active && S.enc.active !== c.id ? `end:${S.enc.active}` : 'own';
+  const opt = (v, label) => `<option value="${v}"${v === def ? ' selected' : ''}>${esc(label)}</option>`;
+  return opt('own', 'end of its own turn') + others.map(x => {
+    const nm = R.nameOf(ctx, x);
+    return opt(`end:${x.id}`, `end of ${nm}'s turn`) + opt(`start:${x.id}`, `start of ${nm}'s turn`);
+  }).join('');
+}
+
 function combatantPanel(c) {
   const v = R.vit(ctx, c), ch = ctx.linked(c), hp = R.hp(ctx, c), temp = R.tempHp(ctx, c);
   const slots = v.slots || [];
@@ -154,7 +177,8 @@ function combatantPanel(c) {
       <div class="line"><select class="field" id="insCond" aria-label="Condition">${S.meta.conditions.map(n => `<option>${n}</option>`).join('')}</select>
         <input class="field rounds" type="number" min="1" id="insRounds" placeholder="Rounds" aria-label="Rounds">
         <button class="btn" data-a="addcond">Add</button></div>
-      <p class="hint">Blank rounds lasts until removed. Rounds count down at the end of this creature's turn. Adding Exhaustion raises its level by one.</p></div>
+      <div class="line"><label class="hint">Counts down at <select class="field" id="insWhen" aria-label="When the rounds count down">${whenOptions(c)}</select></label></div>
+      <p class="hint">Blank rounds lasts until removed. For an effect another creature caused ("until the end of your next turn"), pick that creature's turn: it counts down there, and a timer set during that creature's own turn skips that turn. Adding Exhaustion raises its level by one.</p></div>
     <div class="blk"><h4>Spell slots ${ch ? '<span class="hint">from sheet</span>' : `<button class="link" data-a="editslots">${editing ? 'Done' : 'Edit'}</button>`}</h4>${slotHtml}</div>
     ${ch ? derivedHtml(ch, { compact: true }) : ''}
     <div id="sbHost"></div>
@@ -204,8 +228,15 @@ export async function addMonster(idx) {
       conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100 });
     return init;
   });
+  const waiting = joined(S.enc.c.slice(-qty));
   saveEnc(); renderTracker();
-  toast(`Added ${qty > 1 ? qty + '× ' : ''}${m.name} (initiative ${rolls.join(', ')}).`);
+  toast(`Added ${qty > 1 ? qty + '× ' : ''}${m.name} (initiative ${rolls.join(', ')}).${waiting}`);
+}
+
+/** New combatants in a fight in progress: those above the current turn start next round. Returns a note for the toast. */
+function joined(list) {
+  const waiting = list.filter(c => R.joinCombat(ctx, c)).map(c => R.nameOf(ctx, c));
+  return waiting.length ? ` ${waiting.join(', ')} ${waiting.length > 1 ? 'join' : 'joins'} next round: their initiative has already passed.` : '';
 }
 
 /** Add a party member; returns "Name 17" (their initiative), or null if they're already in the fight. */
@@ -215,8 +246,9 @@ export function addChar(id) {
   const init = d20() + ch.derived.initiative;
   S.enc.c.push({ id: uid(), charId: id, name: ch.sheet.name, kind: 'pc', init, mod: ch.derived.mods.dex, ac: ch.derived.ac,
     hp: ch.sheet.hp, max: ch.sheet.max_hp, temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + Math.random() });
+  const waiting = R.joinCombat(ctx, S.enc.c[S.enc.c.length - 1]);
   saveEnc(); renderTracker();
-  return `${ch.sheet.name} ${init}`;
+  return `${ch.sheet.name} ${init}${waiting ? ' (joins next round)' : ''}`;
 }
 
 // ---------- events ----------
@@ -266,7 +298,11 @@ async function onInspectClick(e) {
     case 'dmg': { const n = amountFrom('#insAmt'); if (n) changed(c, R.damage(ctx, c, n, e.shiftKey)); break; }
     case 'heal': { const n = amountFrom('#insAmt'); if (n) changed(c, R.heal(ctx, c, n)); break; }
     case 'temp': { const n = amountFrom('#insAmt'); if (n) changed(c, R.giveTemp(ctx, c, n)); break; }
-    case 'addcond': changed(c, R.addCondition(ctx, c, $('#insCond').value, parseInt($('#insRounds').value, 10))); break;
+    case 'addcond': {
+      const [at, src] = ($('#insWhen')?.value || 'own').split(':');
+      changed(c, R.addCondition(ctx, c, $('#insCond').value, parseInt($('#insRounds').value, 10), src ? { src, at } : {}));
+      break;
+    }
     case 'rmcond': c.conds.splice(+b.dataset.i, 1); changed(c); break;
     case 'exhdown': changed(c, R.setExhaustion(ctx, c, R.exhaustion(ctx, c) - 1)); break;
     case 'slot': R.toggleSlot(R.vit(ctx, c).slots[+b.dataset.l], +b.dataset.p); changed(c); break;
@@ -283,7 +319,9 @@ async function onInspectClick(e) {
       const n = JSON.parse(JSON.stringify(c));
       Object.assign(n, { id: uid(), seq: c.seq + 0.001, hp: n.max, temp: 0, exh: 0, conds: [], ds: { s: 0, f: 0 } });
       n.name = R.groupNames(S.enc, c.name.replace(/\s+\d+$/, ''), 1)[0];
-      S.enc.c.push(n); saveEnc();
+      S.enc.c.push(n);
+      R.joinCombat(ctx, n);
+      saveEnc();
       break;
     }
     case 'del':
@@ -332,8 +370,9 @@ function onAddForm(e) {
     S.enc.c.push({ id: uid(), name: nm, kind, init: initRaw !== '' ? parseInt(initRaw, 10) : d20() + md, mod: md,
       ac, hp, max: hp, temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100 });
   });
+  const waiting = joined(S.enc.c.slice(-n));
   saveEnc(); renderTracker();
-  toast(`Added ${n > 1 ? n + '× ' : ''}${name}.`);
+  toast(`Added ${n > 1 ? n + '× ' : ''}${name}.${waiting}`);
   $('#a-name').value = ''; $('#a-init').value = '';
 }
 
@@ -401,7 +440,7 @@ export function initCombat() {
   };
   $('#clearAll').onclick = () => {
     if (S.confirm.clear) {
-      S.enc = { round: 1, active: null, skip: S.enc.skip, c: [], ticks: [] };
+      S.enc = { round: 1, active: null, acted: [], skip: S.enc.skip, c: [], ticks: [] };
       S.sel = null; S.confirm.clear = false;
       saveEnc(); renderInspector();
     } else {
