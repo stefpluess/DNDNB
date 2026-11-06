@@ -241,6 +241,35 @@ export function damage(ctx, c, amount, crit = false) {
   return msgs;
 }
 
+export const DAMAGE_MODS = { normal: 'Normal', resist: 'Resistant', vuln: 'Vulnerable', immune: 'Immune' };
+
+/**
+ * Damage a creature actually takes (2024 order of application): halving for a successful save comes
+ * first, then resistance halves (rounded down), then vulnerability doubles. Immunity means none.
+ */
+export function adjustDamage(amount, { half = false, mod = 'normal' } = {}) {
+  let n = Math.max(0, Math.floor(amount));
+  if (half) n = Math.floor(n / 2);
+  if (mod === 'immune') return 0;
+  if (mod === 'resist') n = Math.floor(n / 2);
+  if (mod === 'vuln') n *= 2;
+  return n;
+}
+
+/**
+ * One damage roll against several creatures (Fireball, a breath weapon). Each target is { c, half, mod }.
+ * Returns { msgs, dealt: [{ name, n }] }.
+ */
+export function damageMany(ctx, targets, amount, crit = false) {
+  const msgs = [], dealt = [];
+  for (const t of targets) {
+    const n = adjustDamage(amount, t);
+    dealt.push({ name: nameOf(ctx, t.c), n });
+    if (n > 0) msgs.push(...damage(ctx, t.c, n, crit));
+  }
+  return { msgs, dealt };
+}
+
 export function heal(ctx, c, amount) {
   const wasDown = hp(ctx, c) <= 0;
   set(ctx, c, 'hp', Math.min(maxHp(ctx, c), hp(ctx, c) + amount));

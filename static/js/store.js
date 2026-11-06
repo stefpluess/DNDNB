@@ -14,6 +14,8 @@ export const S = {
   sel: null,                  // { type: 'c', id } | { type: 'entry', kind, idx } | { type: 'char', id }
   libKind: 'monster',
   editingSlots: new Set(),    // combatant ids with the slot editor open (UI only, never saved)
+  targets: new Map(),         // combatant id -> { half, mod }: ticked for area damage (UI only, never saved)
+  groupAmt: '',               // what's typed in the area damage box
   // party view
   currentChar: null,
   // bestiary view

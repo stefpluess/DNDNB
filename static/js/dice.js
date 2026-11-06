@@ -36,3 +36,13 @@ export function roll(expr, rand = Math.random) {
 export const doubleDice = expr => String(expr).replace(/(\d*)d(\d+)/g, (_, n, f) => `${2 * (+n || 1)}d${f}`);
 
 export const d20 = (rand = Math.random) => 1 + Math.floor(rand() * 20);
+
+/**
+ * An amount typed into a damage or healing box: "12", "12+7" or "2d6+3".
+ * Returns { total, detail, rolled } (rolled: dice were involved), or null if it isn't a positive amount.
+ */
+export function parseAmount(text, rand = Math.random) {
+  const r = roll(text, rand);
+  if (!r || !(r.total > 0)) return null;
+  return { total: r.total, detail: r.detail, rolled: /d/i.test(String(text)) };
+}

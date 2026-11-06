@@ -108,6 +108,25 @@ test('a linked PC reads and writes HP and exhaustion on its sheet', () => {
   assert.equal(ch.sheet.exhaustion, 1);
 });
 
+test('damage adjustments: half on a save first, then resistance, then vulnerability', () => {
+  assert.equal(R.adjustDamage(25), 25);
+  assert.equal(R.adjustDamage(25, { half: true }), 12);
+  assert.equal(R.adjustDamage(25, { mod: 'resist' }), 12);
+  assert.equal(R.adjustDamage(25, { half: true, mod: 'resist' }), 6);   // 25 → 12 → 6, not 25 / 4
+  assert.equal(R.adjustDamage(25, { mod: 'vuln' }), 50);
+  assert.equal(R.adjustDamage(25, { half: true, mod: 'vuln' }), 24);
+  assert.equal(R.adjustDamage(25, { mod: 'immune' }), 0);
+  assert.equal(R.adjustDamage(1, { mod: 'resist' }), 0);
+});
+
+test('one roll damages several creatures, each with its own save and resistance', () => {
+  const a = mk({ name: 'A', hp: 30, max: 30 }), b = mk({ name: 'B', hp: 30, max: 30 }), c = mk({ name: 'C', hp: 30, max: 30 });
+  const ctx = fight([a, b, c]);
+  const { dealt } = R.damageMany(ctx, [{ c: a }, { c: b, half: true }, { c, mod: 'immune' }], 21);
+  assert.deepEqual(dealt, [{ name: 'A', n: 21 }, { name: 'B', n: 10 }, { name: 'C', n: 0 }]);
+  assert.deepEqual([a.hp, b.hp, c.hp], [9, 20, 30]);
+});
+
 // ---------- turns ----------
 
 test('turns go in initiative order and wrap into the next round', () => {

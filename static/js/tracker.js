@@ -1,8 +1,9 @@
 // The Combat view: library (left), initiative tracker (middle), inspector and roll log (right).
 
 import * as R from './combat.js';
-import { d20, roll } from './dice.js';
+import { d20, parseAmount, roll } from './dice.js';
 import { bindForm } from './forms.js';
+import { createHistory } from './history.js';
 import { switchView } from './nav.js';
 import { classLine, derivedHtml } from './sheetview.js';
 import { itemHtml, mdLite, monAC, monInit, monsterLine, spellHtml, statBlock } from './statblock.js';
@@ -20,10 +21,59 @@ function changed(c, msgs = []) {
   saveEnc();
 }
 const selected = () => (S.sel?.type === 'c' ? S.enc.c.find(x => x.id === S.sel.id) : null);
-function amountFrom(sel) {
-  const v = parseInt($(sel)?.value, 10);
-  if (!(v > 0)) { toast('Enter an amount first.'); return 0; }
-  return v;
+
+/** The amount in a damage or healing box: "12", "12+7" or "2d6+3" (dice are rolled and logged). 0 if invalid. */
+function amountOf(text, what = 'Amount') {
+  if (!String(text ?? '').trim()) { toast('Enter an amount first.'); return 0; }
+  const r = parseAmount(text);
+  if (!r) { toast(`"${text}" isn't an amount. Try 12, 12+7 or 2d6+3.`); return 0; }
+  if (r.rolled) pushLog(`${what}: ${text}`, r);
+  return r.total;
+}
+const amountFrom = (sel, what) => amountOf($(sel)?.value, what);
+
+// ---------- undo ----------
+// A snapshot holds the encounter plus the combat fields of every linked character sheet
+// (only those, so undoing a hit never reverts edits made in the Party view).
+
+const fightFields = sh => ({ hp: sh.hp, temp_hp: sh.temp_hp, exhaustion: sh.exhaustion, slots: JSON.parse(JSON.stringify(sh.slots || [])) });
+const history = createHistory({
+  capture: () => ({
+    enc: JSON.parse(JSON.stringify(S.enc)),
+    sheets: S.enc.c.filter(c => ctx.linked(c)).map(c => [c.charId, fightFields(ctx.linked(c).sheet)]),
+  }),
+  restore: snap => {
+    S.enc = snap.enc;
+    for (const [id, f] of snap.sheets) {
+      const ch = S.chars.get(id);
+      if (ch) { Object.assign(ch.sheet, f); scheduleCharSave(id); }
+    }
+    for (const id of S.targets.keys()) if (!S.enc.c.some(c => c.id === id)) S.targets.delete(id);
+    if (S.sel?.type === 'c' && !selected()) S.sel = null;
+    saveEnc();
+  },
+});
+/** Call right before an action changes the fight, so Ctrl+Z can take it back. */
+const remember = label => history.remember(label);
+const who = c => R.nameOf(ctx, c);
+
+export function undo(dir = -1) {
+  const label = dir < 0 ? history.undo() : history.redo();
+  if (!label) return toast(dir < 0 ? 'Nothing to undo.' : 'Nothing to redo.');
+  toast(`${dir < 0 ? 'Undid' : 'Redid'}: ${label}.`);
+  renderTracker(); renderInspector();
+}
+function renderUndo() {
+  const u = history.undoLabel, r = history.redoLabel;
+  Object.assign($('#undoBtn'), { disabled: !u, title: u ? `Undo: ${u} (Ctrl+Z)` : 'Nothing to undo' });
+  Object.assign($('#redoBtn'), { disabled: !r, title: r ? `Redo: ${r} (Ctrl+Shift+Z)` : 'Nothing to redo' });
+}
+
+/** Damage with a resistance setting: returns the rule messages plus a note when the amount changed. */
+function hurt(c, amount, mod, crit) {
+  const n = R.adjustDamage(amount, { mod });
+  const note = mod !== 'normal' ? [`${R.DAMAGE_MODS[mod]}: ${who(c)} takes ${n}.`] : [];
+  return n > 0 ? [...note, ...R.damage(ctx, c, n, crit)] : note;
 }
 
 // ---------- tracker ----------
@@ -57,11 +107,11 @@ function rowHtml(c) {
   const turnTag = turn === 'now' ? '<span class="turn now">Their turn</span>' : turn === 'done' ? '<span class="turn done" title="Already acted this round, or joined after its initiative had passed">✓ Acted</span>' : '';
   return `<div class="${classes}" data-id="${c.id}">
     <input class="field init" type="number" id="init-${c.id}" data-f="init" value="${c.init}" aria-label="Initiative for ${esc(v.name)}">
-    <div class="who"><div class="top-line"><span class="nm">${esc(v.name)}</span>${turnTag}<span class="tag">${tag}</span></div>${chipsHtml(c)}</div>
+    <div class="who"><div class="top-line"><input type="checkbox" class="pick" data-pick${S.targets.has(c.id) ? ' checked' : ''} aria-label="Target ${esc(v.name)}" title="Tick to include in area damage"><span class="nm">${esc(v.name)}</span>${turnTag}<span class="tag">${tag}</span></div>${chipsHtml(c)}</div>
     <span class="ac" title="Armor Class"><b>${v.ac}</b><small>AC</small></span>
     <div class="hp ${hpState(c)}"><div class="meter"><i style="width:${Math.max(0, Math.min(100, hp / max * 100))}%"></i>${temp ? `<em style="width:${Math.min(100, temp / max * 100)}%"></em>` : ''}</div>
       <span class="num">${hp}<small>/${max}</small>${temp ? ` <span class="tmp">+${temp}</span>` : ''}</span></div>
-    <div class="quick"><input class="field" type="number" min="0" id="q-${c.id}" data-q placeholder="Dmg" aria-label="Amount for ${esc(v.name)}" title="Enter: damage · Shift+Enter: heal">
+    <div class="quick"><input class="field" inputmode="text" autocomplete="off" id="q-${c.id}" data-q placeholder="Dmg" aria-label="Amount for ${esc(v.name)}" title="12, 12+7 or 2d6+3 · Enter: damage · Shift+Enter: heal">
       <button class="btn bad" data-a="qdmg" title="Damage (Shift-click: from a critical hit)">−</button><button class="btn ok" data-a="qheal" title="Heal">+</button></div>
   </div>`;
 }
@@ -83,9 +133,83 @@ export function renderTracker() {
   $('#skipDown').checked = !!S.enc.skip;
   $('#clearAll').textContent = S.confirm.clear ? 'Click again to clear' : 'Clear tracker';
   $('#list').innerHTML = L.length ? L.map(rowHtml).join('') : '<div class="empty-list">No combatants yet.</div>';
+  $('#pickFoes').disabled = !L.some(c => c.kind === 'foe' && R.hp(ctx, c) > 0);
+  renderGroupBar();
+  renderUndo();
+}
+
+// ---------- area damage: one roll against every ticked creature ----------
+
+const targetList = () => [...S.targets].map(([id, t]) => ({ c: S.enc.c.find(x => x.id === id), ...t })).filter(t => t.c);
+let groupKey = '';
+function renderGroupBar() {
+  const bar = $('#groupBar'), T = targetList();
+  bar.hidden = !T.length;
+  const key = JSON.stringify(T.map(t => [t.c.id, who(t.c), t.half, t.mod]));
+  if (key === groupKey) return updateGroupPreview();
+  groupKey = key;
+  if (!T.length) { bar.innerHTML = ''; return; }
+  const modOpts = cur => Object.entries(R.DAMAGE_MODS).map(([k, l]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${l}</option>`).join('');
+  bar.innerHTML = `<div class="gb-head"><b>${T.length} target${T.length > 1 ? 's' : ''}</b>
+      <input class="field" id="gAmt" autocomplete="off" placeholder="Damage: 28 or 8d6" aria-label="Damage for all targets" value="${esc(S.groupAmt)}" title="One roll for everyone. Enter: damage">
+      <button class="btn bad" data-g="dmg">Damage all</button><button class="btn ok" data-g="heal">Heal all</button>
+      <span class="spacer"></span><button class="link" data-g="clear">Clear targets</button></div>
+    <div class="gb-list">${T.map(t => `<div class="gb-t" data-id="${t.c.id}"><span class="nm">${esc(who(t.c))}</span>
+      <label class="hint"><input type="checkbox" data-g="half"${t.half ? ' checked' : ''}> Saved: half</label>
+      <select class="field" data-g="mod" aria-label="Resistance of ${esc(who(t.c))}">${modOpts(t.mod)}</select>
+      <span class="gb-n" data-prev></span><button class="link" data-g="drop" title="Remove from targets" aria-label="Remove ${esc(who(t.c))} from targets">×</button></div>`).join('')}</div>`;
+  updateGroupPreview();
+}
+/** Show what each target takes while the box holds a plain number (dice aren't rolled until you apply). */
+function updateGroupPreview() {
+  const txt = S.groupAmt.trim();
+  const n = /d/i.test(txt) ? null : parseAmount(txt)?.total;
+  for (const row of document.querySelectorAll('#groupBar .gb-t')) {
+    const t = S.targets.get(row.dataset.id);
+    const out = row.querySelector('[data-prev]');
+    if (t && out) out.textContent = n ? `takes ${R.adjustDamage(n, t)}` : '';
+  }
+}
+function applyGroup(kind) {
+  const T = targetList();
+  const what = kind === 'dmg' ? 'Damage' : 'Healing';
+  const amount = amountOf(S.groupAmt, `${what} for ${T.length}`);
+  if (!amount || !T.length) return;
+  remember(`${what} ${amount} to ${T.length} creature${T.length > 1 ? 's' : ''}`);
+  let msgs;
+  if (kind === 'dmg') {
+    const r = R.damageMany(ctx, T, amount);
+    msgs = [r.dealt.map(d => `${d.name} ${d.n}`).join(', ') + '.', ...r.msgs];
+  } else msgs = [`Healed ${T.map(t => who(t.c)).join(', ')} by ${amount}.`, ...T.flatMap(t => R.heal(ctx, t.c, amount))];
+  T.forEach(t => { if (ctx.linked(t.c)) scheduleCharSave(t.c.charId); });
+  S.targets.clear(); S.groupAmt = '';
+  changed(null, msgs);
+  renderTracker(); renderInspector();
+}
+function onGroupEvent(e) {
+  const g = e.target.closest('[data-g]')?.dataset.g;
+  const row = e.target.closest('.gb-t');
+  const t = row && S.targets.get(row.dataset.id);
+  if (e.type === 'click') {
+    if (g === 'dmg' || g === 'heal') applyGroup(g);
+    else if (g === 'clear') { S.targets.clear(); renderTracker(); }
+    else if (g === 'drop') { S.targets.delete(row.dataset.id); renderTracker(); }
+  } else if (e.type === 'change' && t) {
+    if (g === 'half') t.half = e.target.checked;
+    if (g === 'mod') t.mod = e.target.value;
+    renderGroupBar();
+  } else if (e.type === 'input' && e.target.id === 'gAmt') {
+    S.groupAmt = e.target.value;
+    updateGroupPreview();
+  } else if (e.type === 'keydown' && e.target.id === 'gAmt' && e.key === 'Enter') {
+    e.preventDefault();
+    applyGroup('dmg');
+  }
 }
 
 function step(dir) {
+  if (!S.enc.c.length) return;
+  remember(dir > 0 ? (S.enc.active ? 'Next turn' : 'Start combat') : 'Previous turn');
   const msgs = R.step(ctx, dir);
   S.sel = S.enc.active ? { type: 'c', id: S.enc.active } : S.sel;
   if (msgs.length) toast(msgs.join(' '));
@@ -164,8 +288,9 @@ function combatantPanel(c) {
   return `<div class="ins-head"><h2>${esc(v.name)}</h2><p>${esc(sub)} · initiative ${c.init}</p></div>
     <div class="blk"><h4>Hit points</h4>
       <div class="bigstat"><span class="v">${hp}<small>/${R.maxHp(ctx, c)}</small></span>${temp ? `<span class="v tmp">+${temp}<small> temp</small></span>` : ''}<span class="v">${v.ac}<small> AC</small></span></div>
-      <div class="line"><input class="field" type="number" min="0" id="insAmt" placeholder="Amount" aria-label="Amount">
-        <button class="btn bad" data-a="dmg" title="Shift-click: damage from a critical hit">Damage</button><button class="btn ok" data-a="heal">Heal</button><button class="btn" data-a="temp">Temp HP</button></div>
+      <div class="line"><input class="field" autocomplete="off" id="insAmt" placeholder="12, 12+7, 2d6+3" aria-label="Amount">
+        <select class="field" id="insMod" aria-label="Resistance to this damage">${Object.entries(R.DAMAGE_MODS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></div>
+      <div class="line"><button class="btn bad" data-a="dmg" title="Shift-click: damage from a critical hit">Damage</button><button class="btn ok" data-a="heal">Heal</button><button class="btn" data-a="temp">Temp HP</button></div>
       ${ch ? '' : `<div class="line">
         <label class="hint">Max HP <input class="field tiny" type="number" min="1" id="insMax" data-path="max" data-type="num" value="${c.max}"></label>
         <label class="hint">AC <input class="field tiny" type="number" id="insAc" data-path="ac" data-type="num" value="${c.ac}"></label>
@@ -220,6 +345,7 @@ export async function addMonster(idx) {
   const qty = Math.max(1, Math.min(20, parseInt($('#libQty').value, 10) || 1));
   const rollHp = $('#libRollHp').checked;
   const initBonus = monInit(m), dexMod = m.modifiers?.dexterity ?? initBonus;
+  remember(`Add ${qty > 1 ? qty + '× ' : ''}${m.name}`);
   const names = R.groupNames(S.enc, m.name, qty);
   const rolls = names.map((name, i) => {
     const hp = rollHp ? Math.max(1, roll(m.hit_dice || '')?.total || m.hit_points) : m.hit_points;
@@ -243,6 +369,7 @@ function joined(list) {
 export function addChar(id) {
   const ch = S.chars.get(id);
   if (S.enc.c.some(c => c.charId === id)) { toast(`${ch.sheet.name} is already in the fight.`); return null; }
+  remember(`Add ${ch.sheet.name}`);
   const init = d20() + ch.derived.initiative;
   S.enc.c.push({ id: uid(), charId: id, name: ch.sheet.name, kind: 'pc', init, mod: ch.derived.mods.dex, ac: ch.derived.ac,
     hp: ch.sheet.hp, max: ch.sheet.max_hp, temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + Math.random() });
@@ -261,11 +388,12 @@ function onListClick(e) {
   if (b) {
     const a = b.dataset.a;
     if (a === 'qdmg' || a === 'qheal') {
-      const v = amountFrom(`#q-${c.id}`);
+      const v = amountFrom(`#q-${c.id}`, `${a === 'qdmg' ? 'Damage to' : 'Healing for'} ${who(c)}`);
       if (!v) return;
+      remember(`${a === 'qdmg' ? 'Damage' : 'Heal'} ${who(c)} ${v}`);
       changed(c, a === 'qdmg' ? R.damage(ctx, c, v, e.shiftKey) : R.heal(ctx, c, v));
-    } else if (a === 'rmcond') { c.conds.splice(+b.dataset.i, 1); changed(c); }
-    else if (a === 'exhdown') changed(c, R.setExhaustion(ctx, c, R.exhaustion(ctx, c) - 1));
+    } else if (a === 'rmcond') { remember(`Remove ${c.conds[+b.dataset.i]?.n} from ${who(c)}`); c.conds.splice(+b.dataset.i, 1); changed(c); }
+    else if (a === 'exhdown') { remember(`Lower ${who(c)}'s Exhaustion`); changed(c, R.setExhaustion(ctx, c, R.exhaustion(ctx, c) - 1)); }
     renderTracker();
     if (S.sel?.id === c.id) renderInspector();
     return;
@@ -294,10 +422,22 @@ async function onInspectClick(e) {
   if (!b || !c) return;
   const a = b.dataset.a;
   if (a !== 'del') S.confirm.del = null;
+  const LABEL = { dmg: 'Damage', heal: 'Heal', temp: 'Temp HP for' };
+  if (LABEL[a]) {
+    const n = amountFrom('#insAmt', `${LABEL[a]} ${who(c)}`);
+    if (!n) return;
+    remember(`${LABEL[a]} ${who(c)} ${n}`);
+    changed(c, a === 'dmg' ? hurt(c, n, $('#insMod').value, e.shiftKey) : a === 'heal' ? R.heal(ctx, c, n) : R.giveTemp(ctx, c, n));
+    return (renderTracker(), renderInspector());
+  }
+  const UNDO = {
+    addcond: () => `Add ${$('#insCond').value} to ${who(c)}`, rmcond: () => `Remove ${c.conds[+b.dataset.i]?.n} from ${who(c)}`,
+    exhdown: () => `Lower ${who(c)}'s Exhaustion`, slot: () => `Spell slot for ${who(c)}`, ds: () => `Death save mark for ${who(c)}`,
+    dsroll: () => `Death save for ${who(c)}`, dup: () => `Duplicate ${who(c)}`, del: () => S.confirm.del === c.id && `Remove ${who(c)}`,
+  };
+  const label = UNDO[a]?.();
+  if (label) remember(label);
   switch (a) {
-    case 'dmg': { const n = amountFrom('#insAmt'); if (n) changed(c, R.damage(ctx, c, n, e.shiftKey)); break; }
-    case 'heal': { const n = amountFrom('#insAmt'); if (n) changed(c, R.heal(ctx, c, n)); break; }
-    case 'temp': { const n = amountFrom('#insAmt'); if (n) changed(c, R.giveTemp(ctx, c, n)); break; }
     case 'addcond': {
       const [at, src] = ($('#insWhen')?.value || 'own').split(':');
       changed(c, R.addCondition(ctx, c, $('#insCond').value, parseInt($('#insRounds').value, 10), src ? { src, at } : {}));
@@ -365,6 +505,7 @@ function onAddForm(e) {
   const kind = $('#a-kind').value, md = parseInt($('#a-mod').value, 10) || 0;
   const initRaw = $('#a-init').value.trim(), hpStr = $('#a-hp').value, ac = parseInt($('#a-ac').value, 10) || 10;
   if (!roll(hpStr)) return toast('HP needs a number or dice, like 45 or 6d8+18.');
+  remember(`Add ${n > 1 ? n + '× ' : ''}${name}`);
   R.groupNames(S.enc, name, n).forEach((nm, i) => {
     const hp = Math.max(1, roll(hpStr).total);
     S.enc.c.push({ id: uid(), name: nm, kind, init: initRaw !== '' ? parseInt(initRaw, 10) : d20() + md, mod: md,
@@ -381,16 +522,24 @@ export function initCombat() {
   $('#list').addEventListener('keydown', e => {
     if (e.key !== 'Enter' || !e.target.matches('[data-q]')) return;
     const c = S.enc.c.find(x => x.id === e.target.closest('.cb').dataset.id);
-    const v = parseInt(e.target.value, 10);
-    if (!(v > 0) || !c) return;
+    if (!c) return;
+    const v = amountOf(e.target.value, `${e.shiftKey ? 'Healing for' : 'Damage to'} ${who(c)}`);
+    if (!v) return;
+    remember(`${e.shiftKey ? 'Heal' : 'Damage'} ${who(c)} ${v}`);
     changed(c, e.shiftKey ? R.heal(ctx, c, v) : R.damage(ctx, c, v));
     renderTracker();
     if (S.sel?.id === c.id) renderInspector();
     $(`#q-${c.id}`)?.focus();
   });
   $('#list').addEventListener('change', e => {
+    const c = S.enc.c.find(x => x.id === e.target.closest('.cb')?.dataset.id);
+    if (!c) return;
+    if (e.target.matches('[data-pick]')) {
+      if (e.target.checked) S.targets.set(c.id, { half: false, mod: 'normal' }); else S.targets.delete(c.id);
+      return renderTracker();
+    }
     if (!e.target.matches('[data-f="init"]')) return;
-    const c = S.enc.c.find(x => x.id === e.target.closest('.cb').dataset.id);
+    remember(`Initiative for ${who(c)}`);
     c.init = parseInt(e.target.value, 10) || 0;
     saveEnc(); renderTracker();
   });
@@ -432,15 +581,26 @@ export function initCombat() {
 
   $('#nextBtn').onclick = () => step(1);
   $('#prevBtn').onclick = () => step(-1);
-  $('#endBtn').onclick = () => { R.endCombat(S.enc); saveEnc(); renderTracker(); toast('Combat ended.'); };
+  $('#endBtn').onclick = () => { remember('End combat'); R.endCombat(S.enc); saveEnc(); renderTracker(); toast('Combat ended.'); };
+  $('#undoBtn').onclick = () => undo(-1);
+  $('#redoBtn').onclick = () => undo(1);
+  $('#pickFoes').onclick = () => {
+    S.enc.c.filter(c => c.kind === 'foe' && R.hp(ctx, c) > 0 && !S.targets.has(c.id)).forEach(c => S.targets.set(c.id, { half: false, mod: 'normal' }));
+    renderTracker();
+    $('#gAmt')?.focus();
+  };
+  for (const type of ['click', 'change', 'input', 'keydown']) $('#groupBar').addEventListener(type, onGroupEvent);
   $('#clearFoes').onclick = () => {
+    remember('Remove foes');
     R.removeCombatants(ctx, S.enc.c.filter(c => c.kind !== 'pc').map(c => c.id));
     if (S.sel?.type === 'c' && !selected()) S.sel = null;
     saveEnc(); renderTracker(); renderInspector();
   };
   $('#clearAll').onclick = () => {
     if (S.confirm.clear) {
+      remember('Clear tracker');
       S.enc = { round: 1, active: null, acted: [], skip: S.enc.skip, c: [], ticks: [] };
+      S.targets.clear();
       S.sel = null; S.confirm.clear = false;
       saveEnc(); renderInspector();
     } else {

@@ -43,6 +43,7 @@
       <button class="btn" id="prevBtn" title="Previous turn (P)">Back</button>
       <button class="btn primary" id="nextBtn" title="Next turn (N)">Start combat</button>
     </div>
+    <div class="groupbar" id="groupBar" hidden></div>
     <div class="list" id="list"></div>
     <details class="quickadd">
       <summary>Add a custom combatant</summary>
@@ -58,12 +59,15 @@
       </form>
     </details>
     <div class="tools">
+      <button class="btn sm" id="undoBtn" disabled title="Undo (Ctrl+Z)">Undo</button>
+      <button class="btn sm" id="redoBtn" disabled title="Redo (Ctrl+Shift+Z)">Redo</button>
+      <button class="btn sm" id="pickFoes" title="Tick every standing foe as a target for area damage">Target all foes</button>
       <button class="btn sm" id="endBtn" hidden>End combat</button>
       <button class="btn sm" id="clearFoes">Remove foes</button>
       <button class="btn sm bad" id="clearAll">Clear tracker</button>
       <span class="spacer"></span>
       <label><input type="checkbox" id="skipDown"> Skip defeated foes</label>
-      <span class="keys"><kbd>N</kbd> next · <kbd>P</kbd> back</span>
+      <span class="keys"><kbd>N</kbd> next · <kbd>P</kbd> back · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</span>
     </div>
   </section>
 
