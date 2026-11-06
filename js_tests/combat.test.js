@@ -352,6 +352,7 @@ test('attack rolls: total against AC, natural 20 crits, natural 1 misses', () =>
   assert.equal(R.attackOutcome({ dice: [4, 15], mode: 'adv', bonus: 2, ac: 17 }).total, 17);
   assert.equal(R.attackOutcome({ dice: [4, 15], mode: 'dis', bonus: 2, ac: 17 }).total, 6);
   assert.equal(R.attackOutcome({ dice: [15], bonus: 2, pen: 4, ac: 15 }).hit, false);   // Exhaustion 2
+  assert.deepEqual(R.attackOutcome({ dice: [19], bonus: 0, ac: 25, critOn: 19 }), { nat: 19, total: 19, hit: true, crit: true });   // Champion
 });
 
 test('attack reminders come from both creatures\' conditions', () => {

@@ -483,7 +483,7 @@ function attackHtml(c) {
     const vs = `${last.total} vs AC ${last.ac}`;
     const exprs = last.parts.map(p => (last.crit ? doubleDice(p.e) : p.e) + (p.t ? ` ${p.t.toLowerCase()}` : '')).join(' + ');
     result = last.hit
-      ? `<div class="atkres hit"><p><b>${esc(last.feat)} ${last.crit ? 'crits' : 'hits'} ${esc(who(lt))}</b> (${last.crit ? 'natural 20' : vs}).${last.crit ? ' Damage dice are doubled.' : ''}</p>
+      ? `<div class="atkres hit"><p><b>${esc(last.feat)} ${last.crit ? 'crits' : 'hits'} ${esc(who(lt))}</b> (${last.crit ? `natural ${last.nat}` : vs}).${last.crit ? ' Damage dice are doubled.' : ''}</p>
           ${R.defensesOf(lt) && last.parts.some(p => R.defenseMod(R.defensesOf(lt), p.t) !== 'normal') ? `<p class="hint">${esc(who(lt))}: ${esc(last.parts.map(p => `${p.t || 'untyped'} ${(R.DAMAGE_MODS[R.defenseMod(R.defensesOf(lt), p.t)] || 'resistant + vulnerable').toLowerCase()}`).join(', '))}.</p>` : ''}
           ${hitOptionsHtml(c, lt, last)}
           ${last.parts.length ? `<div class="line"><select class="field" id="atkDmgMod" aria-label="Resistance to this damage">${modOpts('auto', true)}</select>
@@ -506,6 +506,10 @@ function hitOptionsHtml(c, t, last) {
   const x = last.extra || {}, ch = ctx.linked(c), out = [];
   if (x.rage && R.hasCond(c, 'Raging')) out.push(`<p class="hint">Raging: +${x.rage} damage included.</p>`);
   if (x.gwf) out.push('<p class="hint">Great Weapon Fighting: 1s and 2s on the weapon\'s damage dice count as 3.</p>');
+  (x.riders || []).forEach((r, i) => {
+    if (r.needs && !R.hasCond(c, r.needs)) return;
+    out.push(`<label class="hint"><input type="checkbox" data-rider="${i}"> ${esc(r.name)} (+${esc(r.dice)} ${esc(r.type)}${r.once ? ', once per turn' : ''})</label>`);
+  });
   if (x.sneak) out.push(`<label class="hint"><input type="checkbox" id="atkSneak"> Sneak Attack (+${esc(x.sneak)}, once per turn: Advantage or an ally next to the target)</label>`);
   if (x.smite && ch) {
     const fiend = FIEND_OR_UNDEAD(t);
@@ -523,7 +527,8 @@ function attackTarget(c, t, btn) {
   const dice = mode === 'normal' ? [d20()] : [d20(), d20()];
   const pen = ctx.linked(c) ? 0 : 2 * R.exhaustion(ctx, c);          // a sheet's bonus already includes Exhaustion
   const ac = R.vit(ctx, t).ac;
-  const r = R.attackOutcome({ dice, mode, bonus, pen, ac });
+  const critOn = JSON.parse(btn.dataset.extra || '{}').crit || 20;
+  const r = R.attackOutcome({ dice, mode, bonus, pen, ac, critOn });
   const feat = btn.dataset.feat || 'Attack';
   const res = r.crit ? 'critical hit' : r.hit ? 'hit' : 'miss';
   pushLog(`${who(c)} · ${feat} vs ${who(t)}: ${res}`,
@@ -541,6 +546,10 @@ function applyAttack(c) {
   const parts = last.parts.map(p => ({ ...p, min: x.gwf ? 3 : 0 }));
   if (x.rage && R.hasCond(c, 'Raging')) parts.push({ e: String(x.rage), t: base, label: 'Rage' });
   if (x.sneak && $('#atkSneak')?.checked) parts.push({ e: x.sneak, t: base, label: 'Sneak Attack' });
+  document.querySelectorAll('#inspect [data-rider]:checked').forEach(el => {
+    const r = x.riders?.[+el.dataset.rider];
+    if (r) parts.push({ e: r.dice, t: r.type || base, label: r.name });
+  });
   const smite = +($('#atkSmite')?.value || 0), ch = ctx.linked(c);
   if (smite && ch) {
     parts.push({ e: `${smite + 1 + (FIEND_OR_UNDEAD(t) ? 1 : 0)}d8`, t: 'radiant', label: 'Divine Smite' });

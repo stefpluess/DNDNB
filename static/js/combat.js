@@ -465,10 +465,10 @@ const deathOf = (ctx, c) => die(ctx, c, 'three death save failures');
  * A natural 20 always hits and is a critical hit; a natural 1 always misses.
  * `pen` is subtracted from the total (Exhaustion, when the bonus doesn't already include it).
  */
-export function attackOutcome({ dice, mode = 'normal', bonus = 0, pen = 0, ac }) {
+export function attackOutcome({ dice, mode = 'normal', bonus = 0, pen = 0, ac, critOn = 20 }) {
   const nat = mode === 'adv' ? Math.max(...dice) : mode === 'dis' ? Math.min(...dice) : dice[0];
   const total = nat + bonus - pen;
-  const crit = nat === 20;
+  const crit = nat >= critOn;                                          // 20, or lower with Improved Critical
   const hit = crit || (nat !== 1 && total >= ac);
   return { nat, total, hit, crit };
 }

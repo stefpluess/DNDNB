@@ -25,6 +25,7 @@ import random
 import re
 import uuid
 
+import subclasses
 from common import ABILITIES, ABILITY_NAMES, SKILLS, mod, prof_bonus, short_key, signed, skill_key
 
 # 2024 Player's Handbook / SRD 5.2 starting proficiencies.
@@ -44,6 +45,8 @@ CLASS_DEFAULTS = {
     "sorcerer":  ([],                                      ["simple"],                           ["con", "cha"], "cha", 6),
     "warlock":   (["light"],                               ["simple"],                           ["wis", "cha"], "cha", 8),
     "wizard":    ([],                                      ["simple"],                           ["int", "wis"], "int", 6),
+    # Tasha's Cauldron (2014 rules era)
+    "artificer": (["light", "medium", "shields"],          ["simple"],                           ["con", "int"], "int", 8),
 }
 # Weapon Mastery: number of weapons known, as (from level, count) steps (2024 class tables).
 MASTERY_STEPS = {"barbarian": [(1, 2), (4, 3), (10, 4)], "fighter": [(1, 3), (4, 4), (10, 5), (16, 6)],
@@ -75,17 +78,22 @@ RESOURCES = {
                  ("innate_sorcery", "Innate Sorcery", [(1, 2)], "long")],
     "warlock": [("magical_cunning", "Magical Cunning", [(2, 1)], "long")],
     "wizard": [("arcane_recovery", "Arcane Recovery", [(1, 1)], "long")],
+    "artificer": [("flash_of_genius", "Flash of Genius", lambda lv, m: max(1, m["int"]) if lv >= 7 else 0, "long")],
 }
+# Unarmored Movement (Monk, no armor or shield) and Fast Movement (Barbarian, no heavy armor)
+MONK_SPEED = [(2, 10), (6, 15), (10, 20), (14, 25), (18, 30)]
+ATTUNE_LIMIT = {"artificer": [(1, 3), (10, 4), (14, 5), (18, 6)]}
 RAGE_DAMAGE = [(1, 2), (9, 3), (16, 4)]
 BARDIC_DIE = [(1, "d6"), (5, "d8"), (10, "d10"), (15, "d12")]
 FIGHTING_STYLES = ["archery", "defense", "dueling", "great_weapon", "thrown_weapon", "two_weapon", "unarmed"]
 
 
-def class_resources(cls, level, m, used=None):
-    """[{key, name, max, used, recover, pool}] for a class at a level. pool: track as a number, not pips."""
+def class_resources(cls, level, m, used=None, extra=()):
+    """[{key, name, max, used, recover, pool}] for a class at a level, plus `extra` (key, name, max, recover)
+    resources from the subclass. pool: track as a number, not pips."""
     out = []
-    for key, name, mx, rec in RESOURCES.get(cls, []):
-        n = mx(level, m) if callable(mx) else _by_level(mx, level)
+    for key, name, mx, rec in [*RESOURCES.get(cls, []), *extra]:
+        n = mx if isinstance(mx, int) else mx(level, m) if callable(mx) else _by_level(mx, level)
         if n <= 0:
             continue
         rec = rec(level) if callable(rec) else rec
@@ -112,7 +120,7 @@ FULL_CASTER_SLOTS = {
     19: [4, 3, 3, 3, 3, 2, 1, 1, 1], 20: [4, 3, 3, 3, 3, 2, 2, 1, 1],
 }
 FULL_CASTERS = {"bard", "cleric", "druid", "sorcerer", "wizard"}
-HALF_CASTERS = {"paladin", "ranger"}
+HALF_CASTERS = {"paladin", "ranger", "artificer"}   # Artificer slots round up: the same table
 # warlock level -> (number of pact slots, slot level)
 PACT_SLOTS = {1: (1, 1), 2: (2, 1), 3: (2, 2), 4: (2, 2), 5: (2, 3), 6: (2, 3), 7: (2, 4), 8: (2, 4),
               9: (2, 5), 10: (2, 5), **{l: (3, 5) for l in range(11, 17)}, **{l: (4, 5) for l in range(17, 21)}}
@@ -150,7 +158,7 @@ def blank_sheet(name="New character"):
         "exhaustion": 0,
         "styles": [], "spell_ability": None, "ac_misc": 0, "init_misc": 0,
         "slots": [{"max": 0, "used": 0} for _ in range(9)],
-        "hit_dice_used": 0, "resources_used": {},
+        "hit_dice_used": 0, "resources_used": {}, "subclass": "", "choices": {},
         "inventory": [], "notes": "",
     }
 
@@ -168,8 +176,9 @@ def normalize(sheet):
         sheet["prof"][k] = sorted({skill_key(x) for x in sheet["prof"][k]})
     while len(sheet["slots"]) < 9:
         sheet["slots"].append({"max": 0, "used": 0})
-    if not isinstance(sheet.get("resources_used"), dict):
-        sheet["resources_used"] = {}
+    for k in ("resources_used", "choices"):
+        if not isinstance(sheet.get(k), dict):
+            sheet[k] = {}
     sheet["styles"] = [{"great-weapon": "great_weapon", "great weapon fighting": "great_weapon"}.get(x, x) for x in sheet["styles"]]
     for item in sheet["inventory"]:
         _repair_shield(item)
@@ -258,8 +267,7 @@ def short_rest(sheet, spend=0, roll=None):
         for slot in sheet["slots"]:
             slot["used"] = 0
     used = sheet["resources_used"]
-    m = derive(sheet)["mods"]
-    for r in class_resources(cls, level, m, used):
+    for r in derive(sheet)["resources"]:
         if r["recover"] == "short":
             used[r["key"]] = 0
         elif r["recover"] == "short1" and used.get(r["key"]):
@@ -380,6 +388,16 @@ def _proficient_weapon(w, item_name, profs):
             or item_name.lower().replace(" ", "-") in profs)
 
 
+def _check_extra(chk, m, pb):
+    """The bonus a subclass check effect adds: an ability modifier (with a minimum) or half the PB."""
+    add = chk["add"]
+    if add == "half_pb_up":
+        return math.ceil(pb / 2)
+    if add == "half_pb":
+        return pb // 2
+    return max(chk.get("min", -99), m[add])
+
+
 def derive(sheet):
     sheet = normalize(sheet)
     level = int(sheet.get("level") or 1)
@@ -406,6 +424,13 @@ def derive(sheet):
                 score_notes[a] = item["name"]
     m = {a: mod(s) for a, s in scores.items()}
 
+    # subclass: its effects join the class's (training is added here, never written into the sheet)
+    sub = subclasses.effects(sheet, cls, level, pb, m)
+    if sub:
+        warnings += sub["warnings"]
+        prof = {**prof, "armor": sorted(set(prof["armor"]) | set(sub["armor"])),
+                "weapons": sorted(set(prof["weapons"]) | set(sub["weapons"]))}
+
     # armor class
     armor = next((i for i in active if i.get("type") == "armor"), None)
     shield = next((i for i in active if i.get("type") == "shield"), None)
@@ -428,12 +453,16 @@ def derive(sheet):
         if "defense" in styles:
             ac_parts.append(("Defense fighting style", 1))
     else:
-        ac_parts.append(("Unarmored", 10))
-        ac_parts.append(("Dexterity", m["dex"]))
+        # unarmored: the best of the formulas the character has
+        options = [[("Unarmored", 10), ("Dexterity", m["dex"])]]
         if cls == "barbarian":
-            ac_parts.append(("Constitution (Unarmored Defense)", m["con"]))
+            options.append(options[0] + [("Constitution (Unarmored Defense)", m["con"])])
         elif cls == "monk" and not shield:
-            ac_parts.append(("Wisdom (Unarmored Defense)", m["wis"]))
+            options.append(options[0] + [("Wisdom (Unarmored Defense)", m["wis"])])
+        for f in (sub or {}).get("ac_unarmored", []):
+            if not (f["no_shield"] and shield):
+                options.append([(f["name"], f["base"])] + [(ABILITY_NAMES[a], m[a]) for a in f["abilities"]])
+        ac_parts += max(options, key=lambda o: sum(v for _, v in o))
     if shield:
         a = shield.get("armor") or {}
         if "shields" in {p.lower() for p in prof["armor"]}:
@@ -467,6 +496,12 @@ def derive(sheet):
                      "proficient": p, "expertise": exp}
         if jack and not p:
             skills[s]["jack"] = True
+        for chk in (sub or {}).get("checks", []):
+            if a in chk["abilities"] and not (chk.get("unproficient") and p):
+                extra = _check_extra(chk, m, pb)
+                if extra and not (jack and not p and chk["add"].startswith("half_pb")):
+                    skills[s]["bonus"] += extra
+                    skills[s]["from"] = chk["from"]
     if armor and (armor.get("armor") or {}).get("stealth_dis"):
         skills["stealth"]["disadvantage"] = armor["name"]
     passive = 10 + skills["perception"]["bonus"] + pen   # passive scores aren't d20 Tests
@@ -475,6 +510,17 @@ def derive(sheet):
     speed = int(sheet.get("speed") or 30)
     if armor and (armor.get("armor") or {}).get("str_min") and scores["str"] < int(armor["armor"]["str_min"]):
         speed -= 10
+    heavy = bool(armor) and ((armor.get("armor") or {}).get("category") or "").lower() == "heavy"
+    speed_notes = []
+    if cls == "monk" and not armor and not shield and level >= 2:
+        speed += _by_level(MONK_SPEED, level)
+        speed_notes.append(("Unarmored Movement", _by_level(MONK_SPEED, level)))
+    if cls == "barbarian" and level >= 5 and not heavy:
+        speed += 10
+        speed_notes.append(("Fast Movement", 10))
+    for bonus, no_heavy, no_armor in (sub or {}).get("speed_rules", []):
+        if not (no_heavy and heavy) and not (no_armor and armor):
+            speed += bonus
     speed = max(0, speed - 5 * exh)
 
     # attacks
@@ -501,8 +547,11 @@ def derive(sheet):
             ab = "dex" if m["dex"] > m["str"] else "str"
         else:
             ab = "str"
-        proficient = _proficient_weapon(w, item["name"], prof["weapons"])
         magic = int(item.get("bonus") or 0)
+        mwa = (sub or {}).get("magic_weapon_ability")    # e.g. Battle Smith: Int with magic weapons
+        if mwa and magic and m[mwa] > m[ab]:
+            ab = mwa
+        proficient = _proficient_weapon(w, item["name"], prof["weapons"])
         hit_parts = [(ABILITY_NAMES[ab], m[ab])]
         if proficient:
             hit_parts.append(("Proficiency", pb))
@@ -586,7 +635,35 @@ def derive(sheet):
         "range": None, "versatile": None, "mastery": None, "mastery_known": False,
         "note": ("Martial Arts" if martial_arts else "Unarmed Fighting") if ma_die else "Or Grapple / Shove: DC 8 + Str + PB",
         **({"rage": rage} if rage and ua == "str" else {}),
+        "unarmed": True,
     })
+
+    # subclass attacks (armor weapons, psychic blades...), then the subclass's critical range and damage riders
+    spell_ab = sheet.get("spell_ability") or (CLASS_DEFAULTS.get(cls, (None,) * 5)[3])
+    for a in (sub or {}).get("attacks", []):
+        ab = {"spell": spell_ab or "int", "best": "dex" if m["dex"] > m["str"] else "str"}.get(a.get("ability"), a.get("ability") or "str")
+        hit = [(ABILITY_NAMES[ab], m[ab]), ("Proficiency", pb)] + ([("Exhaustion", -pen)] if pen else [])
+        bonus = m[ab] if a.get("add_mod", True) else 0
+        attacks.append({
+            "uid": f"sub-{a['name']}", "name": a["name"], "equipped": True, "ability": ab, "proficient": True,
+            "to_hit": sum(v for _, v in hit), "hit_parts": hit, "ranged": not a.get("melee"),
+            "damage_dice": a["dice"], "damage_bonus": bonus, "damage_type": a["type"],
+            "damage": f"{a['dice']}{signed(bonus) if bonus else ''} {a['type']}",
+            "dmg_parts": [(ABILITY_NAMES[ab], bonus)], "range": a.get("range"), "versatile": None,
+            "mastery": None, "mastery_known": False, "note": "; ".join(filter(None, [a["from"], a.get("note")])),
+            **({"own_riders": [a["rider"]]} if a.get("rider") else {}),
+        })
+    crit = (sub or {}).get("crit", 20)
+    for e in attacks:
+        if crit < 20 and not e.get("spell"):
+            e["crit"] = crit
+        riders = list(e.pop("own_riders", []))
+        for r in (sub or {}).get("riders", []):
+            if r["when"] == "any" or (r["when"] in ("weapon", "melee") and (not e.get("unarmed") or r.get("unarmed"))
+                                      and not (r["when"] == "melee" and e["ranged"])):
+                riders.append(r)
+        if riders:
+            e["riders"] = riders
 
     # spellcasting
     spell = None
@@ -596,15 +673,22 @@ def derive(sheet):
                  "dc": 8 + pb + m[sa] + _mod_total(active, "spell_dc"),
                  "attack": pb + m[sa] + _mod_total(active, "spell_attack") - pen}
 
+    # initiative: a Dexterity check, so Dex-check bonuses from the subclass count
+    init = m["dex"] + int(sheet.get("init_misc") or 0) - pen + (sub or {}).get("init", 0)
+    for chk in (sub or {}).get("checks", []):
+        if "dex" in chk["abilities"]:
+            init += _check_extra(chk, m, pb)
+
     attuned = sum(1 for i in sheet["inventory"] if i.get("attune") and i.get("attuned"))
-    if attuned > 3:
-        warnings.append(f"{attuned} items attuned; the limit is 3.")
+    attune_limit = _by_level(ATTUNE_LIMIT.get(cls, [(1, 3)]), level)
+    if attuned > attune_limit:
+        warnings.append(f"{attuned} items attuned; the limit is {attune_limit}.")
 
     return {
         "level": level, "prof_bonus": pb,
         "scores": scores, "mods": m, "score_notes": score_notes,
         "ac": ac, "ac_parts": ac_parts,
-        "initiative": m["dex"] + int(sheet.get("init_misc") or 0) - pen,
+        "initiative": init,
         "exhaustion": exh, "mastery_slots": mastery_slots(cls, level),
         "speed": speed, "passive_perception": passive,
         "saves": saves, "skills": skills, "attacks": attacks, "spell": spell,
@@ -612,7 +696,10 @@ def derive(sheet):
         "suggested_slots": default_slots(sheet.get("class_name") or "", level),
         "hit_dice": {"die": (CLASS_DEFAULTS.get(cls) or (None,) * 5)[4], "total": level,
                      "left": max(0, level - int(sheet.get("hit_dice_used") or 0))},
-        "resources": class_resources(cls, level, m, sheet.get("resources_used")),
+        "resources": class_resources(cls, level, m, sheet.get("resources_used"), (sub or {}).get("resources", [])),
+        "attune_limit": attune_limit, "speed_notes": speed_notes,
+        "crit_range": crit,
+        "subclass": {k: sub[k] for k in ("key", "name", "source", "features", "spells", "summons", "hp_per_level")} if sub else None,
         "rage_damage": rage, "sneak_attack": sneak,
         "smite": cls == "paladin" and level >= 2,
         "hit_die": (CLASS_DEFAULTS.get(cls) or (None,) * 5)[4],

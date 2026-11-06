@@ -57,6 +57,20 @@ function inventoryRows(s) {
   }).join('');
 }
 
+/** The subclass picker (subclasses of the sheet's class, every edition) and the choices it asks for. */
+function subclassFields(s) {
+  const cls = (s.class_name || '').trim().toLowerCase();
+  const list = S.meta.subclasses.filter(x => x.class === cls);
+  const cur = S.meta.subclasses.find(x => x.key === s.subclass);
+  const opts = list.map(x => `<option value="${x.key}"${x.key === s.subclass ? ' selected' : ''}>${esc(x.name)} (${esc(x.source)})</option>`).join('');
+  const stale = cur && cur.class !== cls ? `<option value="${cur.key}" selected>${esc(cur.name)} (${esc(cur.source)}, not ${esc(s.class_name || 'this class')})</option>` : '';
+  const choices = (cur?.choices || []).map(c => `<label class="lbl-f">${esc(c.feature)} <small class="hint">level ${c.level}</small>
+      <select class="field" data-path="choices.${esc(c.feature)}" data-type="opt"><option value="">Choose…</option>${c.options.map(o =>
+        `<option value="${o.key}"${(s.choices || {})[c.feature] === o.key ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></label>`).join('');
+  return `<label class="lbl-f">Subclass <select class="field" data-path="subclass" data-type="opt" id="f-subclass">
+      <option value="">${list.length ? 'None yet' : cls ? 'No subclasses for this class' : 'Set a class first'}</option>${stale}${opts}</select></label>${choices}`;
+}
+
 function renderSheet() {
   const box = $('#sheet'), ch = current();
   if (!ch) {
@@ -74,6 +88,7 @@ function renderSheet() {
     <div class="grid g4">
       <label class="lbl-f">Name ${txt('name', s.name, 'data-required')}</label><label class="lbl-f">Player ${txt('player', s.player)}</label>
       <label class="lbl-f">Race ${txt('race', s.race)}</label><label class="lbl-f">Class ${txt('class_name', s.class_name, 'list="classList"')}</label>
+      ${subclassFields(s)}
       <label class="lbl-f">Level ${num('level', s.level, 'min="1" max="20"')}</label><label class="lbl-f">Max HP ${num('max_hp', s.max_hp, 'min="1"')}</label>
       <label class="lbl-f">Current HP ${num('hp', s.hp, 'min="0"')}</label><label class="lbl-f">Temp HP ${num('temp_hp', s.temp_hp, 'min="0"')}</label>
       <label class="lbl-f">Speed ${num('speed', s.speed)}</label><label class="lbl-f">Other AC bonus ${num('ac_misc', s.ac_misc)}</label>
@@ -170,12 +185,14 @@ export function initParty() {
 
   bindForm($('#sheet'), {
     target: () => current()?.sheet,
-    onEdit: (path) => {
+    onEdit: (path, _value, _el, phase) => {
       const ch = current();
       const slot = path.match(/^slots\.(\d+)\.max$/);
       if (slot) { const s = ch.sheet.slots[+slot[1]]; s.max = Math.max(0, Math.min(9, s.max)); s.used = Math.min(s.used, s.max); }
       scheduleCharSave(ch.id);
       if (['name', 'class_name', 'level', 'race'].includes(path)) renderCharList();
+      // the subclass list follows the class, and a subclass brings its own choices
+      if (phase === 'change' && (path === 'class_name' || path === 'subclass')) renderSheet();
       if (/\.attune$/.test(path)) renderSheet();
     },
   });

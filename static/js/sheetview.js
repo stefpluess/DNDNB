@@ -22,6 +22,21 @@ function resourcesHtml(d) {
   return `<div class="blk"><h4>Resources ${hd}</h4>${rows}</div>`;
 }
 
+/** The subclass's features by level: gained ones in full, later ones dimmed; choices still to make are flagged. */
+function subclassHtml(d, compact) {
+  const sc = d.subclass;
+  if (!sc) return '';
+  const feats = sc.features.map(f => `<li class="${f.gained ? '' : 'later'}"><b>${esc(f.name)}</b> <small class="hint">level ${f.level}</small>
+      ${f.choice ? `<span class="tag-s">${esc(f.choice)}</span>` : ''}${f.needs_choice && f.gained ? '<span class="dis">choose on the sheet</span>' : ''}
+      <span class="ftext">${esc(f.choice_text || f.text)}</span></li>`).join('');
+  const spells = Object.entries(sc.spells || {}).map(([lv, names]) => `${lv}: ${names.map(esc).join(', ')}`).join(' · ');
+  const body = `<ul class="features">${feats}</ul>
+    ${spells ? `<p class="hint"><b>Always prepared</b> (by class level) ${spells}</p>` : ''}
+    ${sc.hp_per_level ? `<p class="hint">Remember: +${sc.hp_per_level} HP per class level in the Max HP field.</p>` : ''}
+    <p class="hint">Summaries in our own words: check the ${esc(sc.source)} for the exact rules.</p>`;
+  return `<div class="blk"><h4>${esc(sc.name)} <span class="hint">${esc(sc.source)}</span></h4>${compact ? `<details><summary class="hint">Features</summary>${body}</details>` : body}</div>`;
+}
+
 export function derivedHtml(ch, { compact = false } = {}) {
   const d = ch.derived, s = ch.sheet, name = s.name;
   const roll = (expr, type, lbl, text, cls = 'link', title = '', attrs = '') =>
@@ -35,7 +50,8 @@ export function derivedHtml(ch, { compact = false } = {}) {
     const dmg = a.damage_dice ? `${a.damage_dice}${a.damage_bonus ? plusMinus(a.damage_bonus) : ''}` : a.damage_bonus > 0 ? String(a.damage_bonus) : '';
     // what the tracker adds on a hit: Rage (while Raging), Sneak Attack, Divine Smite, Great Weapon Fighting
     const extra = { melee: !a.ranged, ...(a.rage ? { rage: a.rage } : {}), ...(a.sneak ? { sneak: a.sneak } : {}),
-      ...(a.gwf ? { gwf: true } : {}), ...(d.smite && !a.ranged ? { smite: true } : {}) };
+      ...(a.gwf ? { gwf: true } : {}), ...(d.smite && !a.ranged ? { smite: true } : {}),
+      ...(a.crit ? { crit: a.crit } : {}), ...(a.riders ? { riders: a.riders } : {}) };
     return `<div class="atk ${a.equipped ? '' : 'off'}">
       <div class="top-line"><span class="nm">${esc(a.name)}</span>
         ${roll(`1d20${plusMinus(a.to_hit)}`, 'atk', `${name} · ${a.name} to hit`, signed(a.to_hit), 'btn roll', hitTitle, attackAttrs(a.name, [{ e: dmg, t: a.damage_type || '' }], extra))}
@@ -63,6 +79,7 @@ export function derivedHtml(ch, { compact = false } = {}) {
     ${d.rage_damage || d.sneak_attack ? `<div class="tiles">${d.rage_damage ? `<div class="tile"><b>+${d.rage_damage}</b><small>RAGE DAMAGE</small></div>` : ''}${d.sneak_attack
       ? `<div class="tile">${roll(d.sneak_attack, 'dmg', `${name} · Sneak Attack`, `<b>${d.sneak_attack}</b>`, 'link', 'Once per turn: Finesse or Ranged weapon with Advantage, or an ally next to the target. Shift-click for a crit')}<small>SNEAK ATTACK</small></div>` : ''}</div>` : ''}
     ${resourcesHtml(d)}
+    ${subclassHtml(d, compact)}
     <div class="blk"><h4>Attacks <span class="hint">shift-click damage for a crit</span></h4>${attacks}
       ${d.mastery_slots ? `<p class="hint">Weapon Mastery: ${(s.prof.mastery || []).length} of ${d.mastery_slots} known at level ${d.level} (tick them in the inventory).</p>` : ''}</div>
     <div class="blk"><h4>Saving throws</h4><div class="kv kv3">${saves}</div></div>

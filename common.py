@@ -79,9 +79,11 @@ def skill_key(name):
 def meta():
     """Everything the front end needs to render forms and labels."""
     from rules import CLASS_DEFAULTS, FIGHTING_STYLES  # local import: rules imports this module
+    import subclasses
     return {
         "abilities": ABILITIES, "ability_long": ABILITY_LONG, "skills": SKILLS,
         "classes": sorted(c.title() for c in CLASS_DEFAULTS), "sizes": SIZES,
         "damage_types": DAMAGE_TYPES, "action_types": ACTION_TYPES, "conditions": CONDITIONS,
         "cr_values": CR_VALUES, "fighting_styles": FIGHTING_STYLES,
+        "subclasses": subclasses.catalog(),
     }

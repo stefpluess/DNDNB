@@ -1,0 +1,120 @@
+"""Run with:  python -m unittest test_subclasses
+
+The subclass engine (subclasses.py) and how rules.derive applies a subclass, plus a check of every
+catalog entry so a typo in the data fails here and not at the table.
+"""
+import unittest
+
+import rules
+import subclasses
+from subclass_data import CATALOG
+
+
+def char(cls, level, sub="", **abil):
+    s = rules.blank_sheet("Tester")
+    s.update(class_name=cls.title(), level=level, subclass=sub)
+    s["abilities"].update(abil)
+    rules.apply_class_defaults(s)
+    return s
+
+
+class Engine(unittest.TestCase):
+    def test_formulas_and_dice(self):
+        v = subclasses.values(11, 4, {"str": 0, "dex": 2, "con": 1, "int": 3, "wis": 4, "cha": -1})
+        self.assertEqual([subclasses.value(x, v) for x in (3, "pb", "max(1, cha)", "2*pb", "5*level", [(1, 2), (10, 4)])], [3, 4, 1, 8, 55, 4])
+        self.assertEqual(subclasses.dice([(3, "1d4"), (11, "1d6")], v), "1d6")
+        self.assertEqual(subclasses.dice("1d6+{half}", v), "1d6+5")
+        with self.assertRaises(ValueError):
+            subclasses.value("__import__('os')", v)
+
+    def test_every_catalog_entry_evaluates(self):
+        mods = {a: 2 for a in ("str", "dex", "con", "int", "wis", "cha")}
+        for key, sc in CATALOG.items():
+            self.assertIn(sc["class"], rules.CLASS_DEFAULTS, key)
+            self.assertIn(sc["source"], ("PHB 2024", "PHB 2014", "Tasha's"), key)
+            names = [f["name"] for f in sc["features"]]
+            self.assertEqual(len(names), len(set(names)), f"{key}: duplicate feature names")
+            for level in (1, 3, 6, 10, 14, 20):
+                sheet = {"subclass": key, "choices": {f["name"]: f["options"][0][0] for f in sc["features"] if f.get("options")}}
+                out = subclasses.effects(sheet, sc["class"], level, rules.prof_bonus(level), mods)
+                self.assertFalse([w for w in out["warnings"] if "subclass, but" in w], key)
+            for f in sc["features"]:
+                for o in f.get("options") or []:
+                    self.assertGreaterEqual(len(o), 3, f"{key}: {f['name']} option")
+
+    def test_catalog_for_the_editor(self):
+        cat = {c["key"]: c for c in subclasses.catalog()}
+        self.assertEqual(cat["armorer-tce"]["choices"][0]["options"][0], {"key": "guardian", "name": "Guardian"})
+
+
+class OnTheSheet(unittest.TestCase):
+    def test_champion_crit_range_by_level(self):
+        s = char("fighter", 3, "champion-2024", str=16)
+        self.assertEqual(rules.derive(s)["attacks"][0]["crit"], 19)
+        s["level"] = 15
+        self.assertEqual(rules.derive(s)["crit_range"], 18)
+
+    def test_remarkable_athlete_2014_and_initiative(self):
+        s = char("fighter", 7, "champion-2014", dex=14)        # PB 3: half rounded up = 2
+        d = rules.derive(s)
+        self.assertEqual(d["skills"]["acrobatics"]["bonus"], 2 + 2)
+        self.assertEqual(d["initiative"], 2 + 2)
+        s["prof"]["skills"] = ["acrobatics"]
+        self.assertEqual(rules.derive(s)["skills"]["acrobatics"]["bonus"], 2 + 3)   # proficient: not added
+
+    def test_fey_wanderer(self):
+        s = char("ranger", 11, "fey-wanderer-2024", wis=16, cha=8)
+        s["inventory"] = [{"uid": "b", "name": "Longbow", "type": "weapon", "equipped": True,
+                           "weapon": {"index": "longbow", "category": "Martial", "range": "Ranged", "dice": "1d8", "dtype": "piercing", "properties": []}}]
+        d = rules.derive(s)
+        self.assertEqual(d["skills"]["persuasion"]["bonus"], -1 + 3)       # Cha −1, Wis +3
+        bow = d["attacks"][0]
+        self.assertEqual(bow["riders"], [{"dice": "1d6", "type": "psychic", "once": "turn", "name": "Dreadful Strikes", "when": "weapon"}])
+        self.assertNotIn("riders", next(a for a in d["attacks"] if a["name"] == "Unarmed Strike"))   # not a weapon
+        self.assertIn("Misty Step", d["subclass"]["spells"][5])
+
+    def test_draconic_resilience_ac(self):
+        s = char("sorcerer", 3, "draconic-2024", dex=14, cha=16)
+        d = rules.derive(s)
+        self.assertEqual(d["ac"], 10 + 2 + 3)
+        self.assertEqual(d["subclass"]["hp_per_level"], 1)
+
+    def test_armorer_models(self):
+        s = char("artificer", 5, "armorer-tce", int=16)
+        d = rules.derive(s)
+        self.assertTrue(any(f["needs_choice"] for f in d["subclass"]["features"]))
+        s["choices"] = {"Armor Model": "guardian"}
+        d = rules.derive(s)
+        g = next(a for a in d["attacks"] if a["name"] == "Thunder Gauntlets")
+        self.assertEqual((g["to_hit"], g["damage"], g["ranged"]), (3 + 3, "1d8+3 thunder", False))
+        self.assertEqual(next(r for r in d["resources"] if r["key"] == "defensive_field")["max"], 3)
+        s["choices"] = {"Armor Model": "infiltrator"}
+        d = rules.derive(s)
+        ll = next(a for a in d["attacks"] if a["name"] == "Lightning Launcher")
+        self.assertEqual((ll["range"], ll["riders"][0]["dice"]), ("90/300 ft", "1d6"))
+        self.assertEqual(d["speed"], 35)
+
+    def test_armorer_heavy_armor_training(self):
+        s = char("artificer", 3, "armorer-tce", str=10)
+        s["inventory"] = [{"uid": "p", "name": "Plate", "type": "armor", "equipped": True,
+                           "armor": {"category": "Heavy", "base": 18, "dex_bonus": False, "str_min": 0}}]
+        self.assertFalse([w for w in rules.derive(s)["warnings"] if "Not proficient" in w])
+        s["subclass"] = ""
+        self.assertTrue([w for w in rules.derive(s)["warnings"] if "Not proficient" in w])
+
+    def test_wrong_class_or_level_warns(self):
+        self.assertTrue([w for w in rules.derive(char("wizard", 5, "champion-2024"))["warnings"] if "Fighter subclass" in w])
+        self.assertTrue([w for w in rules.derive(char("fighter", 2, "champion-2024"))["warnings"] if "starts at" in w])
+
+    def test_class_movement_and_artificer_basics(self):
+        self.assertEqual(rules.derive(char("monk", 6))["speed"], 30 + 15)
+        self.assertEqual(rules.derive(char("barbarian", 5))["speed"], 40)
+        a = char("artificer", 10, int=16)
+        d = rules.derive(a)
+        self.assertEqual((d["spell"]["ability"], d["attune_limit"], d["hit_die"]), ("int", 4, 8))
+        self.assertEqual(rules.default_slots("Artificer", 1)[:1], [2])
+        self.assertEqual(next(r for r in d["resources"] if r["key"] == "flash_of_genius")["max"], 3)
+
+
+if __name__ == "__main__":
+    unittest.main()
