@@ -18,6 +18,7 @@ export const S = {
   groupAmt: '',               // what's typed in the area damage box
   group: { type: '', ab: '', dc: '', onSave: 'half' },   // area damage: damage type and saving throw
   atk: { target: {}, mode: {}, last: null },
+  castSpell: "Hunter's Mark",  // the spell picked in the inspector's Cast block
   condMoreOpen: false,        // the "concentration and repeated saves" options are open   // attacks: target and roll mode per attacker id, last attack result (UI only)
   // party view
   currentChar: null,

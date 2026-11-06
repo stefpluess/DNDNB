@@ -118,6 +118,13 @@ function renderPrompts() {
   box.hidden = !list.length;
   for (const { c } of list) if (c.ref && !S.entryCache.has(c.ref)) getEntry(...c.ref.split(':')).then(renderTracker, () => {});
   box.innerHTML = list.map(({ p, c }) => {
+    if (p.kind === 'mark') {
+      const from = S.enc.c.find(x => x.id === p.from);
+      const to = S.enc.c.filter(x => x.id !== p.from && x.id !== c.id && R.lifeState(ctx, x) !== 'dead' && !(x.kind !== 'pc' && R.hp(ctx, x) <= 0));
+      return `<div class="prompt" data-pid="${p.id}"><span><b>${esc(who(c))}</b>: ${esc(p.n)} on ${esc(from ? who(from) : 'a fallen creature')} can move (Bonus Action)</span>
+        <select class="field" data-p-to aria-label="New target">${to.map(x => `<option value="${x.id}">${esc(who(x))}</option>`).join('')}</select>
+        <button class="btn sm ok" data-p="move">Move</button><button class="btn sm" data-p="no">Not now</button></div>`;
+    }
     const b = saveBonus(c, p.ab), rule = R.saveRule(c, p.ab);
     const what = p.kind === 'conc' ? 'to keep concentration' : `to end ${esc(p.n)}`;
     const [yes, no] = p.kind === 'conc' ? ['Kept', 'Lost'] : ['Succeeded', 'Failed'];
@@ -129,19 +136,31 @@ function renderPrompts() {
   }).join('');
 }
 
+/** Roll the Bless / Bane dice a creature adds to an attack roll or save. Returns { total, detail }. */
+function rollExtras(c) {
+  const rolls = R.rollMods(c).map(d => ({ d, r: roll(d) })).filter(x => x.r);
+  return { total: rolls.reduce((n, x) => n + x.r.total, 0), detail: rolls.map(x => ` ${x.r.total < 0 ? '−' : '+'} ${Math.abs(x.r.total)} (${x.d.replace('-', '')}${x.d.startsWith('-') ? ' Bane' : ' Bless'})`).join('') };
+}
+
 function onPromptClick(e) {
   const b = e.target.closest('[data-p]'), row = e.target.closest('[data-pid]');
   const p = row && (S.enc.prompts || []).find(x => x.id === row.dataset.pid);
   if (!b || !p) return;
   const c = S.enc.c.find(x => x.id === p.cid);
+  if (p.kind === 'mark') {
+    remember(`Move ${p.n}`);
+    changed(c, R.resolvePrompt(ctx, p.id, b.dataset.p === 'move' ? row.querySelector('[data-p-to]')?.value : false));
+    return (renderTracker(), renderInspector());
+  }
   let ok = b.dataset.p === 'yes';
   if (b.dataset.p === 'roll') {
     const rule = R.saveRule(c, p.ab), bonus = saveBonus(c, p.ab) ?? 0, dice = [d20(), d20()];
-    const r = R.rollSave({ dice, bonus, dc: p.dc, rule });
+    const ex = rollExtras(c);
+    const r = R.rollSave({ dice, bonus, dc: p.dc, rule, extra: ex.total });
     ok = r.ok;
     if (r.auto) toast(`${who(c)} fails automatically (${r.auto}).`);
     else pushLog(`${who(c)} ${p.ab.toUpperCase()} save vs DC ${p.dc}: ${ok ? 'success' : 'failure'}`,
-      { total: r.total, detail: `[${rule.dis ? dice.join(',') + ' lower' : dice[0]}] ${signed(bonus)}` }, r.die === 20 ? 'crit' : r.die === 1 ? 'fumble' : '');
+      { total: r.total, detail: `[${rule.dis ? dice.join(',') + ' lower' : dice[0]}] ${signed(bonus)}${ex.detail}` }, r.die === 20 ? 'crit' : r.die === 1 ? 'fumble' : '');
   }
   remember(`${who(c)}'s ${p.kind === 'conc' ? 'concentration' : p.n} save`);
   changed(c, R.resolvePrompt(ctx, p.id, ok));
@@ -189,7 +208,7 @@ function rowHtml(c) {
   return `<div class="${classes}" data-id="${c.id}">
     <input class="field init" type="number" id="init-${c.id}" data-f="init" value="${c.init}" aria-label="Initiative for ${esc(v.name)}">
     <div class="who"><div class="top-line"><input type="checkbox" class="pick" data-pick${S.targets.has(c.id) ? ' checked' : ''} aria-label="Target ${esc(v.name)}" title="Tick to include in area damage"><span class="nm">${esc(v.name)}</span>${turnTag}<span class="tag">${tag}</span></div><div class="resrow">${rx}${leg}${spent}</div>${chipsHtml(c)}</div>
-    <span class="ac" title="Armor Class"><b>${v.ac}</b><small>AC</small></span>
+    <span class="ac${R.acOf(ctx, c) !== v.ac ? ' up' : ''}" title="Armor Class${R.acOf(ctx, c) !== v.ac ? ` (${v.ac} base, raised by a spell)` : ''}"><b>${R.acOf(ctx, c)}</b><small>AC</small></span>
     <div class="hp ${hpState(c)}"><div class="meter"><i style="width:${Math.max(0, Math.min(100, hp / max * 100))}%"></i>${temp ? `<em style="width:${Math.min(100, temp / max * 100)}%"></em>` : ''}</div>
       <span class="num">${hp}<small>/${max}</small>${temp ? ` <span class="tmp">+${temp}</span>` : ''}</span></div>
     <div class="quick"><input class="field" inputmode="text" autocomplete="off" id="q-${c.id}" data-q placeholder="Dmg" aria-label="Amount for ${esc(v.name)}" title="12, 12+7 or 2d6+3 · Enter: damage · Shift+Enter: heal">
@@ -333,7 +352,8 @@ async function rollGroupSaves() {
     if (rule.fail) { tgt.half = false; tgt.note = ''; continue; }
     if (bonus == null) { tgt.note = 'no save bonus known: tick by hand'; continue; }
     const dice = [d20(), d20()];
-    const r = R.rollSave({ dice, bonus, dc, rule });
+    const ex = rollExtras(t.c);
+    const r = R.rollSave({ dice, bonus, dc, rule, extra: ex.total });
     tgt.half = r.ok;
     tgt.note = `${r.total} ${r.ok ? 'saved' : 'failed'}${rule.dis ? ' (Disadvantage)' : ''}`;
     pushLog(`${who(t.c)} ${G.ab.toUpperCase()} save vs DC ${dc}: ${r.ok ? 'success' : 'failure'}`,
@@ -494,7 +514,7 @@ function attackHtml(c) {
   }
   return `<div class="blk"><h4>Attack</h4>
     <div class="line"><label class="hint">Target <select class="field" id="atkTarget"><option value="">None: just roll</option>${others.map(x =>
-      `<option value="${x.id}"${t?.id === x.id ? ' selected' : ''}>${esc(who(x))} (AC ${R.vit(ctx, x).ac})</option>`).join('')}</select></label>
+      `<option value="${x.id}"${t?.id === x.id ? ' selected' : ''}>${esc(who(x))} (AC ${R.acOf(ctx, x)})</option>`).join('')}</select></label>
       <select class="field" id="atkMode" aria-label="Roll with">${Object.entries(MODES).map(([k, l]) => `<option value="${k}"${k === mode ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
     ${hints.map(h => `<p class="hint atkhint">${esc(h.text)}</p>`).join('')}
     ${result}
@@ -507,6 +527,9 @@ function hitOptionsHtml(c, t, last) {
   const x = last.extra || {}, ch = ctx.linked(c), out = [];
   if (x.rage && R.hasCond(c, 'Raging')) out.push(`<p class="hint">Raging: +${x.rage} damage included.</p>`);
   if (x.gwf) out.push('<p class="hint">Great Weapon Fighting: 1s and 2s on the weapon\'s damage dice count as 3.</p>');
+  R.hitRiders(c, t, { markDie: ch?.derived.hunters_mark_die }).forEach((r, i) => {
+    out.push(`<label class="hint"><input type="checkbox" data-spellrider="${i}" checked> ${esc(r.name)} (+${esc(r.dice)} ${esc(r.type)})</label>`);
+  });
   (x.riders || []).forEach((r, i) => {
     if (r.needs && !R.hasCond(c, r.needs)) return;
     out.push(`<label class="hint"><input type="checkbox" data-rider="${i}"> ${esc(r.name)} (+${esc(r.dice)} ${esc(r.type)}${r.once ? ', once per turn' : ''})</label>`);
@@ -527,13 +550,14 @@ function attackTarget(c, t, btn) {
   const mode = S.atk.mode[c.id] || 'normal';
   const dice = mode === 'normal' ? [d20()] : [d20(), d20()];
   const pen = ctx.linked(c) ? 0 : 2 * R.exhaustion(ctx, c);          // a sheet's bonus already includes Exhaustion
-  const ac = R.vit(ctx, t).ac;
+  const ac = R.acOf(ctx, t);
   const critOn = JSON.parse(btn.dataset.extra || '{}').crit || 20;
-  const r = R.attackOutcome({ dice, mode, bonus, pen, ac, critOn });
+  const ex = rollExtras(c);
+  const r = R.attackOutcome({ dice, mode, bonus, pen, ac, critOn, extra: ex.total });
   const feat = btn.dataset.feat || 'Attack';
   const res = r.crit ? 'critical hit' : r.hit ? 'hit' : 'miss';
   pushLog(`${who(c)} · ${feat} vs ${who(t)}: ${res}`,
-    { total: r.total, detail: `[${dice.join(',')}]${mode !== 'normal' ? ` ${mode}` : ''} ${bonus >= 0 ? '+' : '−'} ${Math.abs(bonus)}${pen ? ` − ${pen} exhaustion` : ''} vs AC ${ac}` },
+    { total: r.total, detail: `[${dice.join(',')}]${mode !== 'normal' ? ` ${mode}` : ''} ${bonus >= 0 ? '+' : '−'} ${Math.abs(bonus)}${pen ? ` − ${pen} exhaustion` : ''}${ex.detail} vs AC ${ac}` },
     r.crit ? 'crit' : r.nat === 1 ? 'fumble' : '');
   S.atk.last = { by: c.id, target: t.id, feat, parts: JSON.parse(btn.dataset.dmg || '[]'), extra: JSON.parse(btn.dataset.extra || '{}'), ac, ...r };
   renderInspector().then(() => $('.atkres')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
@@ -547,6 +571,11 @@ function applyAttack(c) {
   const parts = last.parts.map(p => ({ ...p, min: x.gwf ? 3 : 0 }));
   if (x.rage && R.hasCond(c, 'Raging')) parts.push({ e: String(x.rage), t: base, label: 'Rage' });
   if (x.sneak && $('#atkSneak')?.checked) parts.push({ e: x.sneak, t: base, label: 'Sneak Attack' });
+  const spellRiders = R.hitRiders(c, t, { markDie: ctx.linked(c)?.derived.hunters_mark_die });
+  document.querySelectorAll('#inspect [data-spellrider]:checked').forEach(el => {
+    const r = spellRiders[+el.dataset.spellrider];
+    if (r) parts.push({ e: r.dice, t: r.type, label: r.name });
+  });
   document.querySelectorAll('#inspect [data-rider]:checked').forEach(el => {
     const r = x.riders?.[+el.dataset.rider];
     if (r) parts.push({ e: r.dice, t: r.type || base, label: r.name });
@@ -572,6 +601,43 @@ function applyAttack(c) {
   const notes = applied.filter(p => p.m !== 'normal').map(p => `${p.t ? p.t.toLowerCase() + ' ' : ''}${(R.DAMAGE_MODS[p.m] || 'resistant + vulnerable').toLowerCase()}`);
   if (smite && ch) scheduleCharSave(c.charId);
   changed(t, [`${who(t)} takes ${n}${notes.length ? ` (${notes.join(', ')})` : ''}.`, ...(n > 0 ? R.damage(ctx, t, n, last.crit) : [])]);
+}
+
+// ---------- casting spells that leave an effect (Hunter's Mark, Hex, Bless...) ----------
+
+function castHtml(c) {
+  const spell = S.castSpell || "Hunter's Mark", e = R.SPELL_EFFECTS[spell];
+  const targets = R.sorted(S.enc).filter(x => R.lifeState(ctx, x) !== 'dead');
+  return `<div class="blk"><h4>Cast</h4>
+    <div class="line"><select class="field" id="castSpell" aria-label="Spell">${Object.entries(R.SPELL_EFFECTS).map(([n, x]) =>
+      `<option value="${esc(n)}"${n === spell ? ' selected' : ''}>${esc(n)} (level ${x.level})</option>`).join('')}</select>
+      ${e.on === 'self' ? '' : `<select class="field" id="castTarget" aria-label="Target">${targets.map(x =>
+        `<option value="${x.id}"${x.id === (S.atk.target[c.id] || '') ? ' selected' : ''}>${esc(who(x))}${x.id === c.id ? ' (self)' : ''}</option>`).join('')}</select>`}
+      <button class="btn sm" data-a="cast">Cast</button></div>
+    <p class="hint">${esc(e.text)}${e.conc ? ' Concentration.' : ''}${ctx.linked(c) ? ' Spends a slot (Hunter\'s Mark: a free Favored Enemy cast first).' : ''}</p></div>`;
+}
+
+function castFor(c) {
+  const spell = $('#castSpell').value, e = R.SPELL_EFFECTS[spell];
+  const target = e.on === 'self' ? c : S.enc.c.find(x => x.id === $('#castTarget')?.value);
+  if (!target) return toast('Pick a target.');
+  remember(`${who(c)} casts ${spell}`);
+  const { msgs, needsSlot } = R.castEffect(ctx, c, spell, target);
+  const ch = ctx.linked(c);
+  if (ch && needsSlot && !msgs.some(m => /is immune/.test(m))) {
+    const free = spell === "Hunter's Mark" && ch.derived.resources.find(r => r.key === 'favored_enemy' && r.used < r.max);
+    if (free) {
+      ch.sheet.resources_used.favored_enemy = free.used + 1;
+      free.used++;
+      msgs.push('Used a free Favored Enemy cast.');
+    } else {
+      const i = R.pickSlot(ch.sheet.slots, e.level);
+      if (i >= 0) { ch.sheet.slots[i].used++; msgs.push(`Used a ${ordinal(i + 1)}-level slot.`); }
+      else msgs.push('No spell slot left for it: check the sheet.');
+    }
+    scheduleCharSave(c.charId);
+  }
+  changed(target, msgs);
 }
 
 /** "Summon Wildfire Spirit" buttons for a party member whose subclass summons creatures. */
@@ -627,7 +693,7 @@ function combatantPanel(c) {
   const sub = ch ? classLine(ch.sheet) : c.ref ? 'Monster' : KIND[c.kind];
   return `<div class="ins-head"><h2>${esc(v.name)}</h2><p>${esc(sub)} · initiative ${c.init}</p></div>
     <div class="blk"><h4>Hit points</h4>
-      <div class="bigstat"><span class="v">${hp}<small>/${R.maxHp(ctx, c)}</small></span>${temp ? `<span class="v tmp">+${temp}<small> temp</small></span>` : ''}<span class="v">${v.ac}<small> AC</small></span></div>
+      <div class="bigstat"><span class="v">${hp}<small>/${R.maxHp(ctx, c)}</small></span>${temp ? `<span class="v tmp">+${temp}<small> temp</small></span>` : ''}<span class="v">${R.acOf(ctx, c)}<small> AC${R.acOf(ctx, c) !== v.ac ? ` (base ${v.ac})` : ''}</small></span></div>
       <div class="line"><input class="field" autocomplete="off" id="insAmt" placeholder="12, 12+7, 2d6+3" aria-label="Amount">
         <select class="field" id="insType" aria-label="Damage type">${typeOpts('')}</select>
         <select class="field" id="insMod" aria-label="Resistance to this damage">${modOpts('normal')}</select></div>
@@ -660,6 +726,7 @@ function combatantPanel(c) {
       <p class="hint">Blank rounds lasts until removed. For an effect another creature caused ("until the end of your next turn"), pick that creature's turn: it counts down there, and a timer set during that creature's own turn skips that turn. Adding Exhaustion raises its level by one.</p></div>
     <div class="blk"><h4>Spell slots ${ch ? '<span class="hint">from sheet</span>' : `<button class="link" data-a="editslots">${editing ? 'Done' : 'Edit'}</button>`}</h4>${slotHtml}</div>
     ${attackHtml(c)}
+    ${castHtml(c)}
     ${summonHtml(c)}
     ${ch ? derivedHtml(ch, { compact: true }) : ''}
     <div id="sbHost"></div>
@@ -816,6 +883,7 @@ async function onInspectClick(e) {
   switch (a) {
     case 'atkapply': applyAttack(c); break;
     case 'summon': return summonFor(c, b.dataset.k);
+    case 'cast': castFor(c); break;
     case 'atkclear': S.atk.last = null; break;
     case 'rx': c.rx = !c.rx; changed(c); break;
     case 'leg': R.toggleSlot(c.res.leg, +b.dataset.p); changed(c); break;
@@ -1034,6 +1102,7 @@ export function initCombat() {
     const c = selected();
     if (c && e.target.matches('[data-respool]') && ctx.linked(c)) { remember(`Resource for ${who(c)}`); onResourceEvent(e, ctx.linked(c)); return renderInspector(); }
     if (c && e.target.id === 'insType') { $('#insMod').value = R.defenseMod(R.defensesOf(c), e.target.value); return; }
+    if (e.target.id === 'castSpell') { S.castSpell = e.target.value; return renderInspector(); }
     if (!c || !['atkTarget', 'atkMode'].includes(e.target.id)) return;
     if (e.target.id === 'atkTarget') { S.atk.target[c.id] = e.target.value; if (S.atk.last?.by === c.id) S.atk.last = null; }
     else S.atk.mode[c.id] = e.target.value;

@@ -25,7 +25,8 @@ ACTION_TYPES = {"ACTION": "Action", "BONUS_ACTION": "Bonus action", "REACTION": 
 # Conditions offered in the tracker: the 2024 conditions plus common effects worth a reminder chip.
 CONDITIONS = ["Blinded", "Charmed", "Concentrating", "Deafened", "Exhaustion", "Frightened", "Grappled",
               "Incapacitated", "Invisible", "Paralyzed", "Petrified", "Poisoned", "Prone", "Restrained",
-              "Stunned", "Unconscious", "Raging", "Blessed", "Hasted", "Hexed", "Marked"]
+              "Stunned", "Unconscious", "Raging", "Blessed", "Baned", "Hasted", "Hunter's Mark", "Hex",
+              "Shield of Faith", "Shield", "Divine Favor"]
 
 CR_VALUES = [0, 0.125, 0.25, 0.5] + list(range(1, 31))
 XP_BY_CR = {0: 10, 0.125: 25, 0.25: 50, 0.5: 100, 1: 200, 2: 450, 3: 700, 4: 1100, 5: 1800, 6: 2300, 7: 2900,

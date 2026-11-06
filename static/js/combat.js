@@ -295,6 +295,7 @@ export function damage(ctx, c, amount, crit = false) {
       if (!hasCond(c, 'Unconscious')) c.conds.push({ n: 'Unconscious', d: null });
     } else msgs.push(`${name} is down.`);
     if (hasCond(c, 'Concentrating')) msgs.push(...endConcentration(ctx, c));
+    offerMarkMove(ctx, c);
   } else if (hp(ctx, c) > 0 && hasCond(c, 'Concentrating')) {
     const dc = concentrationDC(amount);
     msgs.push(`${name}: Con save DC ${dc} to keep concentration.`);
@@ -394,10 +395,10 @@ export function saveRule(c, ab) {
 }
 
 /** Resolve a save: `dice` are d20 rolls (two for Disadvantage, the lower counts). Returns { die, total, ok, auto }. */
-export function rollSave({ dice, bonus, dc, rule = {} }) {
+export function rollSave({ dice, bonus, dc, rule = {}, extra = 0 }) {
   if (rule.fail) return { die: null, total: null, ok: false, auto: rule.fail };
   const die = rule.dis ? Math.min(...dice) : dice[0];
-  const total = die + bonus;
+  const total = die + bonus + extra;                                  // extra: Bless / Bane dice already rolled
   return { die, total, ok: total >= dc, auto: null };
 }
 
@@ -465,9 +466,9 @@ const deathOf = (ctx, c) => die(ctx, c, 'three death save failures');
  * A natural 20 always hits and is a critical hit; a natural 1 always misses.
  * `pen` is subtracted from the total (Exhaustion, when the bonus doesn't already include it).
  */
-export function attackOutcome({ dice, mode = 'normal', bonus = 0, pen = 0, ac, critOn = 20 }) {
+export function attackOutcome({ dice, mode = 'normal', bonus = 0, pen = 0, ac, critOn = 20, extra = 0 }) {
   const nat = mode === 'adv' ? Math.max(...dice) : mode === 'dis' ? Math.min(...dice) : dice[0];
-  const total = nat + bonus - pen;
+  const total = nat + bonus - pen + extra;                            // extra: Bless / Bane dice already rolled
   const crit = nat >= critOn;                                          // 20, or lower with Improved Critical
   const hit = crit || (nat !== 1 && total >= ac);
   return { nat, total, hit, crit };
@@ -577,7 +578,10 @@ export function addCondition(ctx, c, name, rounds, opts = {}) {
   if (name === 'Exhaustion') return setExhaustion(ctx, c, exhaustion(ctx, c) + 1);
   const msgs = [];
   const d = rounds > 0 ? rounds : null;
-  const srcC = opts.src && opts.src !== c.id ? ctx.enc.c.find(x => x.id === opts.src) : null;
+  const found = opts.src ? ctx.enc.c.find(x => x.id === opts.src) : null;
+  // a creature can be the source of its own effect (a concentration spell on itself, or "until the start of
+  // its next turn"); otherwise an own effect simply counts down on its own turn
+  const srcC = found && (found !== c || opts.conc || opts.at === 'start') ? found : null;
   const cond = { n: name, d };
   if (srcC) {
     cond.src = srcC.id;
@@ -664,6 +668,7 @@ export function resolvePrompt(ctx, id, success) {
   if (!c) return [];
   const name = nameOf(ctx, c);
   if (p.kind === 'conc') return success ? [`${name} keeps concentration.`] : endConcentration(ctx, c);
+  if (p.kind === 'mark') return success ? moveMark(ctx, c, p.n, p.from, success) : [];
   if (!success) return [`${name} fails the save: still ${p.n}.`];
   const i = c.conds.findIndex(x => x.n === p.n);
   return [`${name} succeeds: ${p.n} ends.`, ...(i >= 0 ? removeCondition(ctx, c, i) : [])];
@@ -681,6 +686,92 @@ export function setExhaustion(ctx, c, level) {
 export function toggleSlot(slot, p) {
   if (p < slot.max - slot.used) slot.used++;
   else slot.used = Math.max(0, slot.used - 1);
+}
+
+// ---------- spell effects: conditions that carry rules ----------
+//
+// Casting one of these puts a condition on its target (tied to the caster's concentration when the spell
+// needs it). The condition then does its job: a mark adds damage to the caster's hits on the target,
+// Bless and Bane change attack rolls and saves, Shield of Faith, Haste and Shield raise AC.
+
+export const SPELL_EFFECTS = {
+  "Hunter's Mark": { level: 1, on: 'target', cond: "Hunter's Mark", conc: true, mark: { dice: '1d6', type: 'force' }, movable: true,
+    text: "Your attack hits on the target deal +1d6 force; move the mark when it drops to 0 HP." },
+  'Hex': { level: 1, on: 'target', cond: 'Hex', conc: true, mark: { dice: '1d6', type: 'necrotic' }, movable: true,
+    text: 'Your attack hits on the target deal +1d6 necrotic; it has Disadvantage on checks with one ability.' },
+  'Bless': { level: 1, on: 'target', cond: 'Blessed', conc: true, roll: '1d4', text: 'Up to three creatures add 1d4 to attack rolls and saves.' },
+  'Bane': { level: 1, on: 'target', cond: 'Baned', conc: true, roll: '-1d4', save: 'cha', text: 'Up to three creatures (Cha save) subtract 1d4 from attack rolls and saves.' },
+  'Shield of Faith': { level: 1, on: 'target', cond: 'Shield of Faith', conc: true, ac: 2, text: '+2 AC.' },
+  'Haste': { level: 3, on: 'target', cond: 'Hasted', conc: true, ac: 2, text: '+2 AC, Advantage on Dex saves, double speed, one extra limited action.' },
+  'Shield': { level: 1, on: 'self', cond: 'Shield', ac: 5, until: 'start', text: '+5 AC until the start of your next turn (Reaction).' },
+  'Divine Favor': { level: 1, on: 'self', cond: 'Divine Favor', self: { dice: '1d4', type: 'radiant' }, text: 'Your weapon hits deal +1d4 radiant for 1 minute.' },
+};
+const EFFECT_BY_COND = Object.fromEntries(Object.entries(SPELL_EFFECTS).map(([spell, e]) => [e.cond, { spell, ...e }]));
+// older chip names from the condition list mean the same effects
+Object.assign(EFFECT_BY_COND, { Hexed: EFFECT_BY_COND.Hex, Marked: EFFECT_BY_COND["Hunter's Mark"] });
+
+/** AC right now: the base AC plus what effects on the creature add. */
+export function acOf(ctx, c) {
+  return vit(ctx, c).ac + c.conds.reduce((n, x) => n + (EFFECT_BY_COND[x.n]?.ac || 0), 0);
+}
+
+/** Dice a creature's own effects add to its attack rolls and saves: ['1d4'] for Bless, ['-1d4'] for Bane. */
+export const rollMods = c => c.conds.map(x => EFFECT_BY_COND[x.n]?.roll).filter(Boolean);
+
+/**
+ * Extra damage when `atk` hits `tgt`: marks `atk` put on `tgt` (Hunter's Mark, Hex) and `atk`'s own
+ * effects (Divine Favor, weapon hits only). opts.markDie overrides Hunter's Mark's die (Foe Slayer: 1d10).
+ */
+export function hitRiders(atk, tgt, { weapon = true, markDie = null } = {}) {
+  const out = [];
+  for (const x of tgt.conds) {
+    const e = EFFECT_BY_COND[x.n];
+    if (e?.mark && x.src === atk.id) out.push({ name: e.spell, dice: e.spell === "Hunter's Mark" && markDie ? markDie : e.mark.dice, type: e.mark.type });
+  }
+  for (const x of atk.conds) {
+    const e = EFFECT_BY_COND[x.n];
+    if (e?.self && weapon) out.push({ name: e.spell, dice: e.self.dice, type: e.self.type });
+  }
+  return out;
+}
+
+/** The lowest available spell slot (index) of `level` or higher, or -1. */
+export function pickSlot(slots, level) {
+  return (slots || []).findIndex((s, i) => i + 1 >= level && s.max - s.used > 0);
+}
+
+/**
+ * `caster` casts a spell effect on `target` (itself for self spells). Returns { msgs, needsSlot }: needsSlot
+ * is false when the caster is already concentrating on this spell (another target of the same casting).
+ */
+export function castEffect(ctx, caster, spell, target) {
+  const e = SPELL_EFFECTS[spell];
+  const tgt = e.on === 'self' ? caster : target;
+  const conc = caster.conds.find(x => x.n === 'Concentrating');
+  const sameCasting = e.conc && conc?.spell === spell;
+  const msgs = addCondition(ctx, tgt, e.cond, e.until ? 1 : null,
+    { src: caster.id, conc: !!e.conc, spell, ...(e.until ? { at: e.until } : {}) });
+  if (!msgs.some(m => /is immune/.test(m))) msgs.unshift(`${nameOf(ctx, caster)} casts ${spell}${tgt !== caster ? ` on ${nameOf(ctx, tgt)}` : ''}.`);
+  if (e.save) msgs.push(`${nameOf(ctx, tgt)} may make a ${e.save.toUpperCase()} save to resist (remove the chip on a success).`);
+  return { msgs, needsSlot: !sameCasting };
+}
+
+/** A marked creature dropped to 0 HP: offer its caster a prompt to move the mark. */
+function offerMarkMove(ctx, c) {
+  for (const x of c.conds) {
+    const e = EFFECT_BY_COND[x.n];
+    if (e?.movable && x.src && ctx.enc.c.some(o => o.id === x.src)) addPrompt(ctx, { cid: x.src, kind: 'mark', n: x.n, from: c.id, ab: '', dc: 0 });
+  }
+}
+
+/** Move `caster`'s mark `n` from creature `fromId` to creature `toId`. */
+export function moveMark(ctx, caster, n, fromId, toId) {
+  const from = ctx.enc.c.find(x => x.id === fromId), to = ctx.enc.c.find(x => x.id === toId);
+  if (!to) return [];
+  const i = from ? from.conds.findIndex(x => x.n === n && x.src === caster.id) : -1;
+  const cond = i >= 0 ? from.conds.splice(i, 1)[0] : { n, d: null, src: caster.id, conc: true, spell: EFFECT_BY_COND[n]?.spell || n };
+  to.conds = to.conds.filter(x => x.n !== n).concat(cond);
+  return [`${nameOf(ctx, caster)} moves ${n} to ${nameOf(ctx, to)}.`];
 }
 
 // ---------- encounter difficulty and the end-of-combat summary ----------

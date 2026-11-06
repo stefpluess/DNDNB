@@ -516,6 +516,58 @@ test('concentrating on a new spell ends the old one; more targets of the same sp
   assert.equal(w.conds.filter(x => x.n === 'Concentrating').length, 1);
 });
 
+// ---------- spell effects ----------
+
+test("Hunter's Mark adds damage to the caster's hits on the target only, and ends with concentration", () => {
+  const ranger = mk({ name: 'Ranger' }), orc = mk({ name: 'Orc' }), ally = mk({ name: 'Ally' });
+  const ctx = fight([ranger, orc, ally]);
+  const r = R.castEffect(ctx, ranger, "Hunter's Mark", orc);
+  assert.equal(r.needsSlot, true);
+  assert.equal(ranger.conds.find(x => x.n === 'Concentrating').spell, "Hunter's Mark");
+  assert.deepEqual(R.hitRiders(ranger, orc), [{ name: "Hunter's Mark", dice: '1d6', type: 'force' }]);
+  assert.deepEqual(R.hitRiders(ally, orc), []);                                   // someone else's hits
+  assert.deepEqual(R.hitRiders(ranger, orc, { markDie: '1d10' })[0].dice, '1d10');  // Foe Slayer
+  R.endConcentration(ctx, ranger);
+  assert.deepEqual(R.hitRiders(ranger, orc), []);
+});
+
+test('a marked creature at 0 HP lets its caster move the mark', () => {
+  const warlock = mk({ name: 'Warlock' }), a = mk({ name: 'A', hp: 5 }), b = mk({ name: 'B' });
+  const ctx = fight([warlock, a, b]);
+  R.castEffect(ctx, warlock, 'Hex', a);
+  R.damage(ctx, a, 10);
+  const p = ctx.enc.prompts.find(x => x.kind === 'mark');
+  assert.deepEqual([p.cid, p.n, p.from], [warlock.id, 'Hex', a.id]);
+  assert.match(R.resolvePrompt(ctx, p.id, b.id).join(' '), /Warlock moves Hex to B/);
+  assert.deepEqual([a.conds.some(x => x.n === 'Hex'), R.hitRiders(warlock, b)[0].type], [false, 'necrotic']);
+});
+
+test('Bless and Bane change rolls; Shield of Faith, Haste and Shield raise AC', () => {
+  const cleric = mk({ name: 'Cleric', init: 20 }), a = mk({ name: 'A', ac: 15, init: 10 }), b = mk({ name: 'B' });
+  const ctx = fight([cleric, a, b]);
+  assert.equal(R.castEffect(ctx, cleric, 'Bless', a).needsSlot, true);
+  assert.equal(R.castEffect(ctx, cleric, 'Bless', b).needsSlot, false);           // same casting, second target
+  assert.deepEqual(R.rollMods(a), ['1d4']);
+  assert.equal(R.attackOutcome({ dice: [10], bonus: 2, ac: 15, extra: 3 }).hit, true);
+  assert.equal(R.rollSave({ dice: [8], bonus: 0, dc: 10, extra: 2 }).ok, true);
+  R.castEffect(ctx, cleric, 'Shield of Faith', a);                                // a new spell ends Bless
+  assert.deepEqual([R.rollMods(a), R.acOf(ctx, a)], [[], 17]);
+  R.step(ctx, 1);                                                                  // the Cleric's turn
+  R.castEffect(ctx, cleric, 'Shield', null);
+  assert.equal(R.acOf(ctx, cleric), 12 + 5);
+  R.step(ctx, 1); R.step(ctx, 1); R.step(ctx, 1);                                  // start of the Cleric's next turn
+  assert.equal(R.acOf(ctx, cleric), 12);
+});
+
+test('Divine Favor adds to its caster\'s weapon hits; the slot to spend is the lowest available', () => {
+  const p = mk({ name: 'Paladin' }), o = mk({ name: 'O' }), ctx = fight([p, o]);
+  R.castEffect(ctx, p, 'Divine Favor', null);
+  assert.deepEqual(R.hitRiders(p, o), [{ name: 'Divine Favor', dice: '1d4', type: 'radiant' }]);
+  assert.deepEqual(R.hitRiders(p, o, { weapon: false }), []);
+  const slots = [{ max: 2, used: 2 }, { max: 1, used: 0 }, { max: 0, used: 0 }];
+  assert.deepEqual([R.pickSlot(slots, 1), R.pickSlot(slots, 3)], [1, -1]);
+});
+
 // ---------- names ----------
 
 test('group names number creatures and never repeat a number', () => {
