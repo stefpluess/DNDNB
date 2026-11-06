@@ -1,7 +1,8 @@
 // Markdown for wiki pages. DOM-free so it can be tested in Node.
 //
 // Supported: # headings, paragraphs, **bold**, *italic*, `code`, - lists, 1. lists, - [ ] tasks, > quotes,
-// --- rules, | tables |, [text](https://...) and wiki links [[Page title]] / [[Page title|shown text]].
+// --- rules, | tables |, [text](https://...), wiki links [[Page title]] / [[Page title|shown text]] and uploaded
+// images ![Caption|size](file) (size: small, medium or full; a line of only images shows them as figures).
 // Everything the DM typed is escaped; only the tags made here reach the page.
 
 import { esc } from './util.js';
@@ -9,6 +10,24 @@ import { esc } from './util.js';
 const WIKI = /\[\[([^[\]|\n]+?)(\|[^[\]\n]*)?\]\]/g;          // the same syntax as wiki.LINK in wiki.py
 const URL_LINK = /\[([^[\]\n]+)\]\((https?:\/\/[^\s()<>]+)\)/g;
 const SLOT = /\u0000(\d+)\u0000/g;
+// uploaded images only (named by the server: 16 hex + type), so a page never loads anything from the web
+const IMAGE = /!\[([^\]\n]*)\]\(([0-9a-f]{16}\.(?:png|jpg|gif|webp))\)/g;
+const IMAGE_LINE = /^\s*(?:!\[[^\]\n]*\]\([0-9a-f]{16}\.(?:png|jpg|gif|webp)\)\s*)+$/;
+export const IMAGE_SIZES = ['small', 'medium', 'full'];
+export const imageUrl = file => `/api/wiki/images/${file}`;
+
+/** "Map of the city|small" -> { caption: 'Map of the city', size: 'small' }. No size given: full. */
+export function imageAlt(alt) {
+  const i = String(alt).lastIndexOf('|'), size = i >= 0 ? alt.slice(i + 1).trim().toLowerCase() : '';
+  return IMAGE_SIZES.includes(size) ? { caption: alt.slice(0, i).trim(), size } : { caption: String(alt).trim(), size: 'full' };
+}
+
+/** A figure for an image on its own line. editable: size buttons for the editor's preview. */
+function figure(file, alt, editable) {
+  const { caption, size } = imageAlt(alt);
+  const sizes = editable ? `<span class="imgsizes">${IMAGE_SIZES.map(z => `<button type="button" class="${z === size ? 'on' : ''}" data-imgsize="${z}" data-file="${file}" title="Show it ${z === 'full' ? 'at full width' : z}">${z[0].toUpperCase() + z.slice(1)}</button>`).join('')}</span>` : '';
+  return `<figure class="wimg ${size}"><img src="${imageUrl(file)}" alt="${esc(caption)}" loading="lazy" data-img="${file}">${caption ? `<figcaption>${esc(caption)}</figcaption>` : ''}${sizes}</figure>`;
+}
 
 /** The form titles are compared in (as wiki.norm): case and extra spaces don't matter. */
 export const normTitle = t => String(t ?? '').split(/\s+/).filter(Boolean).join(' ').toLowerCase();
@@ -27,6 +46,7 @@ function inline(text, resolve) {
   const keep = html => `\u0000${slots.push(html) - 1}\u0000`;
   const s = String(text)
     .replace(/`([^`\n]+)`/g, (_, c) => keep(`<code>${esc(c)}</code>`))
+    .replace(IMAGE, (_, alt, file) => keep(`<img class="inline" src="${imageUrl(file)}" alt="${esc(imageAlt(alt).caption)}" loading="lazy" data-img="${file}">`))
     .replace(WIKI, (_, target, label) => keep(wikiLink(target.trim(), label ? label.slice(1).trim() : '', resolve)))
     .replace(URL_LINK, (_, t, href) => keep(`<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(t)}</a>`));
   return esc(s)
@@ -58,14 +78,14 @@ const BULLET = /^\s*[-*+]\s+(.*)$/;
 const NUMBER = /^\s*\d+[.)]\s+(.*)$/;
 const TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 const isTable = (line, next) => /^\s*\|/.test(line) && next !== undefined && TABLE_SEP.test(next);
-const startsBlock = (line, next) => HEADING.test(line) || RULE.test(line) || QUOTE.test(line)
+const startsBlock = (line, next) => IMAGE_LINE.test(line) || HEADING.test(line) || RULE.test(line) || QUOTE.test(line)
   || BULLET.test(line) || NUMBER.test(line) || isTable(line, next);
 
 /**
  * A page's Markdown as HTML. resolve(title) returns the page ({ id }) a [[link]] points to, or null when
  * no page has that title yet (the link is shown as missing and creates the page when clicked).
  */
-export function renderMarkdown(text, resolve = () => null) {
+export function renderMarkdown(text, resolve = () => null, { editable = false } = {}) {
   const lines = String(text ?? '').replace(/\u0000/g, '').replace(/\r\n?/g, '\n').split('\n');
   const inl = t => inline(t, resolve);
   const out = [];
@@ -74,6 +94,10 @@ export function renderMarkdown(text, resolve = () => null) {
     const line = lines[i];
     let m;
     if (!line.trim()) { i++; continue; }
+    if (IMAGE_LINE.test(line)) {
+      const figs = [...line.matchAll(IMAGE)].map(x => figure(x[2], x[1], editable));
+      out.push(figs.length > 1 ? `<div class="imgrow">${figs.join('')}</div>` : figs[0]); i++; continue;
+    }
     if ((m = line.match(HEADING))) {
       const lv = m[1].length + 1;                         // # is a section of the page: the title is the h1
       out.push(`<h${lv}>${inl(m[2])}</h${lv}>`); i++; continue;
@@ -82,7 +106,7 @@ export function renderMarkdown(text, resolve = () => null) {
     if (QUOTE.test(line)) {
       const q = [];
       while (i < lines.length && QUOTE.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/, ''));
-      out.push(`<blockquote>${renderMarkdown(q.join('\n'), resolve)}</blockquote>`); continue;
+      out.push(`<blockquote>${renderMarkdown(q.join('\n'), resolve, { editable })}</blockquote>`); continue;
     }
     if (BULLET.test(line) || NUMBER.test(line)) {
       const re = BULLET.test(line) ? BULLET : NUMBER, tag = re === BULLET ? 'ul' : 'ol';
@@ -137,4 +161,31 @@ export function completeLink(text, caret, title) {
   const close = after.startsWith(']]') ? '' : ']]';
   const head = text.slice(0, open.start) + title + close;
   return { text: head + after, caret: head.length + (close ? 0 : 2) };
+}
+
+// ---------- images in the text ----------
+
+/** Markdown for a newly uploaded image: its file name (without the extension) as the caption. */
+export function imageMarkdown(file, name = '') {
+  let caption = String(name).replace(/\.[a-z0-9]+$/i, '').replace(/[[\]|]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/^(image|blob|untitled|pasted.*)$/i.test(caption)) caption = '';      // pasted screenshots have no real name
+  return `![${caption}](${file})`;
+}
+
+/** Every ![...](file) in the text shown at `size` (full: no size written). Captions are kept. */
+export function setImageSize(text, file, size) {
+  return String(text).replace(IMAGE, (all, alt, f) => {
+    if (f !== file) return all;
+    const { caption } = imageAlt(alt);
+    return `![${caption}${size && size !== 'full' ? `|${size}` : ''}](${f})`;
+  });
+}
+
+/** Insert `snippet` at the caret on lines of its own. Returns { text, caret } (the caret after it). */
+export function insertBlock(text, caret, snippet) {
+  const before = String(text).slice(0, caret), after = String(text).slice(caret);
+  const lead = !before || before.endsWith('\n') ? '' : '\n';
+  const trail = after.startsWith('\n') ? '' : '\n';
+  const head = before + lead + snippet + trail;
+  return { text: head + after, caret: head.length };
 }

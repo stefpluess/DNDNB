@@ -165,7 +165,7 @@ function pageSaver() {
     save: page => {
       const p = page || S.wiki.cur;
       if (!p) return Promise.resolve(null);
-      return api(`/api/wiki/${p.id}`, { method: 'PUT', body: { title: p.title, category: p.category, body: p.body } });
+      return api(`/api/wiki/${p.id}`, { method: 'PUT', body: { title: p.title, category: p.category, body: p.body, portrait: p.portrait || '' } });
     },
     onSaved: (res, latest) => { if (res) wikiListeners.saved.forEach(fn => fn(res, latest)); },
     onError: e => wikiListeners.error.forEach(fn => fn(e)),
@@ -176,3 +176,12 @@ function pageSaver() {
 export const scheduleWikiSave = () => pageSaver().schedule();
 /** Save `page` (default: the open page) now; resolves once it's stored. */
 export const saveWikiNow = page => pageSaver().flush(page);
+
+/** Upload an image file for the wiki. Resolves with { file, name, bytes }; the file name goes in the page text. */
+export async function uploadImage(file) {
+  const r = await fetch(`/api/wiki/images?name=${encodeURIComponent(file.name || '')}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
+  const data = await r.json().catch(() => null);
+  if (!r.ok) throw new Error((data && data.error) || r.statusText);
+  return data;
+}

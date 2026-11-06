@@ -30,6 +30,13 @@ class ApiError(Exception):
         self.status = status
 
 
+class Raw:
+    """A handler's reply that isn't JSON (an image)."""
+
+    def __init__(self, data, mime, cache="no-store"):
+        self.data, self.mime, self.cache = data, mime, cache
+
+
 # ---------- who may call the server ----------
 #
 # The server only listens on 127.0.0.1, but a web page open in the same browser could still send it
@@ -330,7 +337,7 @@ def _wiki(fn, *args, **kw):
 
 
 def _page_fields(body):
-    return {k: body[k] for k in ("title", "category", "body") if k in body}
+    return {k: body[k] for k in ("title", "category", "body", "portrait") if k in body}
 
 
 def list_wiki(_req, _q):
@@ -365,6 +372,24 @@ def restore_wiki(_req, _q, pid):
     return _wiki(wiki.restore_page, int(pid))
 
 
+def upload_image(req, q):
+    """POST the image's bytes as the body (any Content-Type); ?name= is the file name it came with."""
+    data = req.raw_body(wiki.MAX_IMAGE_BYTES)
+    if not data:
+        raise ApiError("No image was sent.")
+    return _wiki(wiki.save_image, data, q.get("name", [""])[0], db.wiki_images_dir())
+
+
+def get_image(_req, _q, file):
+    try:
+        path, mime = wiki.image_path(db.wiki_images_dir(), file)
+    except wiki.WikiError as e:
+        raise ApiError(str(e), e.status)
+    with open(path, "rb") as f:
+        # named by their content, so a file never changes: browsers may keep it
+        return Raw(f.read(), mime, "public, max-age=31536000, immutable")
+
+
 ROUTES = [
     ("GET", r"/api/status", status),
     ("GET", r"/api/meta", meta),
@@ -396,6 +421,8 @@ ROUTES = [
     ("PUT", r"/api/wiki/(\d+)", update_wiki),
     ("DELETE", r"/api/wiki/(\d+)", delete_wiki),
     ("POST", r"/api/wiki/(\d+)/restore", restore_wiki),
+    ("POST", r"/api/wiki/images", upload_image),
+    ("GET", r"/api/wiki/images/([\w.]+)", get_image),
 ]
 
 
@@ -420,6 +447,26 @@ class Handler(BaseHTTPRequestHandler):
         if body is not None and not isinstance(body, dict):
             raise ApiError("Request body must be a JSON object.")
         return body
+
+    def raw_body(self, limit):
+        """The request body as bytes, refused before reading when it's over `limit`."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ApiError("Bad Content-Length header.")
+        if n > limit:
+            self.close_connection = True          # the unread body can't be left on the connection
+            raise ApiError(f"That file is larger than {limit // (1024 * 1024)} MB.", 413)
+        return self.rfile.read(n) if n > 0 else b""
+
+    def send_raw(self, raw):
+        self.send_response(200)
+        self.send_header("Content-Type", raw.mime)
+        self.send_header("Content-Length", str(len(raw.data)))
+        self.send_header("Cache-Control", raw.cache)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(raw.data)
 
     def send_json(self, obj, code=200):
         data = json.dumps(obj).encode()
@@ -452,7 +499,8 @@ class Handler(BaseHTTPRequestHandler):
                 if m == method:
                     match = re.fullmatch(pattern, url.path)
                     if match:
-                        return self.send_json(fn(self, parse_qs(url.query), *match.groups()))
+                        out = fn(self, parse_qs(url.query), *match.groups())
+                        return self.send_raw(out) if isinstance(out, Raw) else self.send_json(out)
             if method == "GET" and not url.path.startswith("/api/"):
                 return self.send_static(url.path)
             self.send_json({"error": "Not found"}, 404)

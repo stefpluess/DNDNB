@@ -3,7 +3,9 @@
 The campaign wiki: titles, [[links]], "Linked from", renaming, search and the trash.
 Uses a temporary database, never your real data/ folder.
 """
+import io
 import os
+import sqlite3
 import tempfile
 import unittest
 
@@ -121,6 +123,94 @@ class Pages(unittest.TestCase):
         with self.assertRaises(server.ApiError) as cm:
             server.get_wiki(None, {}, "404")
         self.assertEqual(cm.exception.status, 404)
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"pretend pixels"
+JPG = b"\xff\xd8\xff\xe0" + b"pretend pixels"
+
+
+class Images(Pages):
+    def folder(self):
+        return db.wiki_images_dir()
+
+    def test_types_are_recognized_by_their_bytes(self):
+        self.assertEqual([wiki.image_type(x) for x in (PNG, JPG, b"GIF89a...", b"RIFF\0\0\0\0WEBPVP8 ")], ["png", "jpg", "gif", "webp"])
+        for bad in (b"<svg onload=alert(1)>", b"%PDF-1.7", b"", b"RIFF\0\0\0\0WAVE"):
+            self.assertIsNone(wiki.image_type(bad))
+
+    def test_saved_once_by_content_and_refused_otherwise(self):
+        a = wiki.save_image(self.conn, PNG, "Tavern map.png", self.folder())
+        b = wiki.save_image(self.conn, PNG, "copy.png", self.folder())
+        self.assertRegex(a["file"], r"^[0-9a-f]{16}\.png$")
+        self.assertEqual((b["file"], b["name"]), (a["file"], "Tavern map.png"))       # same picture, stored once
+        self.assertEqual(os.listdir(self.folder()), [a["file"]])
+        with self.assertRaises(wiki.WikiError) as cm:
+            wiki.save_image(self.conn, b"<svg/>", "x.svg", self.folder())
+        self.assertEqual(cm.exception.status, 415)
+        with self.assertRaises(wiki.WikiError) as cm:
+            wiki.save_image(self.conn, PNG + b"0" * wiki.MAX_IMAGE_BYTES, "huge.png", self.folder())
+        self.assertEqual(cm.exception.status, 413)
+
+    def test_only_our_files_are_served(self):
+        a = wiki.save_image(self.conn, JPG, "face.jpg", self.folder())
+        path, mime = wiki.image_path(self.folder(), a["file"])
+        with open(path, "rb") as f:
+            self.assertEqual((f.read(), mime), (JPG, "image/jpeg"))
+        for bad in ("../campaign.db", "campaign.db", "0123456789abcdef.svg", "0123456789abcdef.png"):
+            with self.assertRaises(wiki.WikiError):
+                wiki.image_path(self.folder(), bad)
+
+    def test_portrait_must_be_an_uploaded_image(self):
+        page = self.page("Durnan")
+        a = wiki.save_image(self.conn, PNG, "durnan.png", self.folder())
+        self.assertEqual(wiki.update_page(self.conn, page["id"], portrait=a["file"])["portrait"], a["file"])
+        self.assertEqual(wiki.list_pages(self.conn)["pages"][0]["portrait"], a["file"])
+        self.assertEqual(wiki.update_page(self.conn, page["id"], body="x")["portrait"], a["file"])   # kept
+        with self.assertRaises(wiki.WikiError):
+            wiki.update_page(self.conn, page["id"], portrait="0123456789abcdef.png")
+        self.assertIsNone(wiki.update_page(self.conn, page["id"], portrait="")["portrait"])
+
+    def test_upload_and_fetch_through_the_api(self):
+        class Upload:
+            headers = {"Content-Length": str(len(PNG))}
+            rfile = io.BytesIO(PNG)
+            close_connection = False
+            raw_body = server.Handler.raw_body
+        made = server.upload_image(Upload(), {"name": ["map.png"]})
+        raw = server.get_image(None, {}, made["file"])
+        self.assertEqual((raw.data, raw.mime), (PNG, "image/png"))
+        with self.assertRaises(server.ApiError) as cm:
+            server.get_image(None, {}, "../../server.py")
+        self.assertEqual(cm.exception.status, 404)
+
+    def test_too_big_is_refused_before_reading(self):
+        class Upload:
+            headers = {"Content-Length": str(wiki.MAX_IMAGE_BYTES + 1)}
+            rfile = None                       # reading would fail
+            close_connection = False
+            raw_body = server.Handler.raw_body
+        with self.assertRaises(server.ApiError) as cm:
+            server.upload_image(Upload(), {})
+        self.assertEqual(cm.exception.status, 413)
+
+
+class OlderDatabase(unittest.TestCase):
+    def test_the_portrait_column_is_added_to_an_existing_wiki(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            saved = (db.DATA_DIR, db.CAMPAIGN_DB)
+            db.DATA_DIR, db.CAMPAIGN_DB = tmp, os.path.join(tmp, "campaign.db")
+            try:
+                old = sqlite3.connect(db.CAMPAIGN_DB)
+                old.execute("CREATE TABLE wiki_pages (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, "
+                            "category TEXT NOT NULL DEFAULT 'unsorted', body TEXT NOT NULL DEFAULT '', created TEXT, updated TEXT, deleted TEXT)")
+                old.execute("INSERT INTO wiki_pages(title, body) VALUES ('Kept', 'text')")
+                old.commit(); old.close()
+                conn = db.campaign()
+                page = wiki.get_page(conn, 1)
+                self.assertEqual((page["title"], page["body"], page["portrait"]), ("Kept", "text", None))
+                conn.close()
+            finally:
+                db.DATA_DIR, db.CAMPAIGN_DB = saved
 
 
 if __name__ == "__main__":

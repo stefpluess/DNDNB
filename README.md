@@ -79,7 +79,11 @@ If you used an earlier 2014 version of this app, run `python import_srd.py` once
 - Formatting: `# Heading`, `**bold**`, `*italic*`, `- list`, `- [ ] task` (`- [x]` when done), `> quote`, tables with `| a | b |`, and `---` for a line.
 - Browse by category on the left, or search (press `/`) for any word in titles and text. *Recently edited* shows what you touched last; *Session log* lists sessions newest first. Press `E` to edit the open page, `Esc` to stop editing, `Alt+←` to go back.
 - *Move to trash* never erases a page: open *Trash* at the bottom left to restore it.
-- Pages are stored in `data/campaign.db` with everything else.
+- **Images**: while editing, click *Add image*, paste a screenshot, or drag pictures onto the text (drop them on a page you're reading and they go at the end). PNG, JPEG, GIF and WebP, up to 20 MB.
+  - An image is written as `![Caption](file)`. Hover it in the preview and pick *Small* (beside the text), *Medium* or *Full*; that adds `|small` or `|medium` to the caption. Put several images on one line to show them side by side.
+  - Click any image to see it full-screen. Click the picture (or press `Z`) for its actual size and drag to look around a big map; the arrow keys step through the page's images.
+  - Give a page a portrait (a face, a map, a crest) with *Add a portrait* on the right, or *Use as page portrait* in the full-screen view. Portraits show as small pictures in the page list.
+- Pages are stored in `data/campaign.db` and images in `data/wiki_images/`: back up the whole `data/` folder.
 
 ## Files
 
@@ -88,11 +92,12 @@ If you used an earlier 2014 version of this app, run `python import_srd.py` once
 | `server.py` | Local web server and JSON API (standard library only) |
 | `rules.py` | The 2024 rules math for character sheets |
 | `homebrew.py` | Homebrew creatures: derived stats, attacks and auto descriptions |
-| `wiki.py` | The campaign wiki: pages, links, renaming, search and the trash |
+| `wiki.py` | The campaign wiki: pages, links, renaming, search, the trash, images and portraits |
 | `common.py` | Shared constants (abilities, skills, sizes, CR tables) and formatting; the front end reads them via `/api/meta` |
 | `import_srd.py` | Downloads or imports SRD 5.2 data into `data/srd.db` |
 | `db.py` | SQLite helpers |
 | `data/campaign.db` | Your characters, homebrew creatures, wiki pages and the current encounter. Back this file up. |
+| `data/wiki_images/` | Images added to the wiki. Back it up together with `campaign.db`. |
 | `static/index.html`, `static/style.css` | The page and its styles |
 | `static/js/` | The interface, one module per job (see below) |
 
@@ -106,7 +111,7 @@ The front end is split into plain JavaScript modules (no build step):
 | `dice.js` | Dice expressions |
 | `autosave.js` | Debounced saving that keeps saves to one thing in order |
 | `forms.js` | Connects form fields to data (`data-path`, `data-type`, `data-list`, `data-commit`) |
-| `markdown.js` | Turns wiki page text into HTML, with `[[links]]` |
+| `markdown.js` | Turns wiki page text into HTML, with `[[links]]` and images |
 | `tracker.js`, `party.js`, `bestiary.js`, `wiki.js` | The four views |
 | `statblock.js`, `sheetview.js` | Stat blocks, spells, items, and computed character stats |
 | `ui.js`, `nav.js`, `util.js` | Roll log, view switching, small helpers |

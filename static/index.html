@@ -122,11 +122,19 @@
     <nav class="wikicats" id="wikiCats" aria-label="Categories"></nav>
     <ul id="wikiList"></ul>
     <button class="link wikitrash" id="wikiTrash">Trash</button>
+    <input type="file" id="wikiFile" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
   </aside>
   <section class="sheet wikipage" id="wikiPage"></section>
   <aside class="derived panel-col" id="wikiSide"></aside>
 </div>
 
+<dialog id="lightbox" class="lightbox" aria-label="Image viewer">
+  <div class="lb-bar"><span class="lb-cap"></span><span class="spacer"></span><span class="lb-count"></span>
+    <button class="btn sm" data-lb="zoom" title="Or click the picture (Z)">Actual size</button>
+    <button class="btn sm" data-lb="portrait">Use as page portrait</button>
+    <button class="btn sm" data-lb="close" title="Esc">Close</button></div>
+  <div class="lb-stage"><img alt=""><button class="lb-nav prev" data-lb="prev" aria-label="Previous image">‹</button><button class="lb-nav next" data-lb="next" aria-label="Next image">›</button></div>
+</dialog>
 <dialog id="summaryDlg" class="summary" aria-labelledby="summaryTitle"></dialog>
 <div id="toast" role="status" aria-live="polite"></div>
 <script type="module" src="js/main.js"></script>

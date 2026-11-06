@@ -51,7 +51,14 @@ CREATE TABLE IF NOT EXISTS wiki_pages (
     body     TEXT NOT NULL DEFAULT '',   -- Markdown with [[Page title]] links
     created  TEXT DEFAULT CURRENT_TIMESTAMP,
     updated  TEXT DEFAULT CURRENT_TIMESTAMP,
-    deleted  TEXT                        -- set when moved to the trash; NULL otherwise
+    deleted  TEXT,                       -- set when moved to the trash; NULL otherwise
+    portrait TEXT                        -- an image file shown at the top of the page's info box
+);
+CREATE TABLE IF NOT EXISTS wiki_images (
+    file    TEXT PRIMARY KEY,   -- '<16 hex of the content's SHA-256>.<png|jpg|gif|webp>' in data/wiki_images/
+    name    TEXT NOT NULL,      -- the file name it was uploaded with
+    bytes   INTEGER NOT NULL,
+    created TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS wiki_links (
     src    INTEGER NOT NULL,   -- the page the link is on
@@ -75,10 +82,28 @@ def srd():
     return conn
 
 
+# Columns added after a table first shipped: CREATE TABLE IF NOT EXISTS won't add them to an existing
+# database, so they're added here (never dropped or changed).
+CAMPAIGN_COLUMNS = [("wiki_pages", "portrait", "TEXT")]
+
+
+def add_missing_columns(conn, columns):
+    for table, col, decl in columns:
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if col not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+
+
 def campaign():
     conn = connect(CAMPAIGN_DB)
     conn.executescript(CAMPAIGN_SCHEMA)
+    add_missing_columns(conn, CAMPAIGN_COLUMNS)
     return conn
+
+
+def wiki_images_dir():
+    """Where wiki images are stored: data/wiki_images/ (follows DATA_DIR, so tests use their own)."""
+    return os.path.join(DATA_DIR, "wiki_images")
 
 
 def dumps(obj):

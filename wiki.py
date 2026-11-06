@@ -5,8 +5,14 @@ titles, so "Linked from" is one query and a link to a page that doesn't exist ye
 (it lights up when that page is created). Renaming a page rewrites the links to it in every other page.
 Deleting a page moves it to the trash (deleted is set); nothing is erased.
 
+Images are files in data/wiki_images/, named by their content ("<16 hex of SHA-256>.png"), so the same
+picture uploaded twice is stored once. Pages show them with ![Caption|size](file) and can have one as their
+portrait. Only PNG, JPEG, GIF and WebP are accepted, recognized by their bytes (never SVG: it can hold scripts).
+
 All functions take an open campaign connection; the server wraps them in a session.
 """
+import hashlib
+import os
 import re
 
 CATEGORIES = [
@@ -15,6 +21,10 @@ CATEGORIES = [
 ]
 CATEGORY_KEYS = {k for k, _ in CATEGORIES}
 TITLE_MAX = 120
+
+IMAGE_FILE = re.compile(r"[0-9a-f]{16}\.(?:png|jpg|gif|webp)")
+IMAGE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 # [[Target]] or [[Target|label]]: the target can't contain brackets or a bar
 LINK = re.compile(r"\[\[([^\[\]|\n]+?)(\|[^\[\]\n]*)?\]\]")
@@ -69,12 +79,13 @@ def rewrite_links(body, old, new):
 # ---------- reading ----------
 
 def _row(r):
-    return {"id": r["id"], "title": r["title"], "category": r["category"], "created": r["created"], "updated": r["updated"]}
+    return {"id": r["id"], "title": r["title"], "category": r["category"], "created": r["created"], "updated": r["updated"],
+            "portrait": r["portrait"] if "portrait" in r.keys() else None}
 
 
 def list_pages(conn):
     """Every page outside the trash (no bodies), plus how many are in the trash."""
-    rows = conn.execute("SELECT id, title, category, created, updated FROM wiki_pages WHERE deleted IS NULL "
+    rows = conn.execute("SELECT id, title, category, created, updated, portrait FROM wiki_pages WHERE deleted IS NULL "
                         "ORDER BY title COLLATE NOCASE").fetchall()
     trash = conn.execute("SELECT COUNT(*) FROM wiki_pages WHERE deleted IS NOT NULL").fetchone()[0]
     return {"categories": [{"key": k, "name": n} for k, n in CATEGORIES], "pages": [_row(r) for r in rows], "trash": trash}
@@ -162,9 +173,9 @@ def create_page(conn, title="New page", category="unsorted", body=""):
     return get_page(conn, cur.lastrowid)
 
 
-def update_page(conn, pid, title=None, category=None, body=None):
-    """Change a page. A new title rewrites the links to the old one in every other page.
-    Returns the page plus "relinked": how many other pages were changed."""
+def update_page(conn, pid, title=None, category=None, body=None, portrait=None):
+    """Change a page. A new title rewrites the links to the old one in every other page. portrait: an uploaded
+    image's file, or "" for none. Returns the page plus "relinked": how many other pages were changed."""
     r = conn.execute("SELECT * FROM wiki_pages WHERE id=? AND deleted IS NULL", (pid,)).fetchone()
     if not r:
         raise WikiError("That page doesn't exist any more.", 404)
@@ -173,6 +184,7 @@ def update_page(conn, pid, title=None, category=None, body=None):
         raise WikiError(f'There is already a page called "{new_title}".', 409)
     new_cat = r["category"] if category is None else (category if category in CATEGORY_KEYS else "unsorted")
     new_body = r["body"] if body is None else str(body)
+    new_portrait = r["portrait"] if portrait is None else (_known_image(conn, portrait) if portrait else None)
     relinked = 0
     if new_title != r["title"]:
         for o in conn.execute("SELECT DISTINCT p.id, p.body FROM wiki_links l JOIN wiki_pages p ON p.id = l.src "
@@ -183,8 +195,8 @@ def update_page(conn, pid, title=None, category=None, body=None):
                 _set_links(conn, o["id"], text)
                 relinked += 1
         new_body, _ = rewrite_links(new_body, r["title"], new_title)          # links to itself
-    conn.execute("UPDATE wiki_pages SET title=?, category=?, body=?, updated=CURRENT_TIMESTAMP WHERE id=?",
-                 (new_title, new_cat, new_body, pid))
+    conn.execute("UPDATE wiki_pages SET title=?, category=?, body=?, portrait=?, updated=CURRENT_TIMESTAMP WHERE id=?",
+                 (new_title, new_cat, new_body, new_portrait, pid))
     _set_links(conn, pid, new_body)
     return {**get_page(conn, pid), "relinked": relinked}
 
@@ -208,3 +220,55 @@ def restore_page(conn, pid):
     title = _free_title(conn, r["title"])          # its title may have been reused meanwhile
     conn.execute("UPDATE wiki_pages SET deleted=NULL, title=? WHERE id=?", (title, pid))
     return get_page(conn, pid)
+
+
+# ---------- images ----------
+
+def image_type(data):
+    """'png', 'jpg', 'gif' or 'webp' from a file's first bytes, or None for anything else."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def save_image(conn, data, name, folder):
+    """Store an uploaded image. Returns {file, name, bytes}; the same picture again gives the same file."""
+    if len(data) > MAX_IMAGE_BYTES:
+        raise WikiError(f"That image is larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MB.", 413)
+    ext = image_type(data)
+    if not ext:
+        raise WikiError("Only PNG, JPEG, GIF and WebP images can be added.", 415)
+    file = f"{hashlib.sha256(data).hexdigest()[:16]}.{ext}"
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, file)
+    if not os.path.exists(path):
+        tmp = path + ".part"
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)                   # never a half-written image under the real name
+    name = " ".join(str(name or "").split())[:200] or file
+    conn.execute("INSERT OR IGNORE INTO wiki_images(file, name, bytes) VALUES (?, ?, ?)", (file, name, len(data)))
+    row = conn.execute("SELECT file, name, bytes FROM wiki_images WHERE file=?", (file,)).fetchone()
+    return {"file": row["file"], "name": row["name"], "bytes": row["bytes"]}
+
+
+def image_path(folder, file):
+    """The stored file for an image name, refusing anything that isn't one of ours."""
+    if not IMAGE_FILE.fullmatch(file or ""):
+        raise WikiError("No such image.", 404)
+    path = os.path.join(folder, file)
+    if not os.path.isfile(path):
+        raise WikiError("That image is missing from data/wiki_images.", 404)
+    return path, IMAGE_TYPES[file.rsplit(".", 1)[1]]
+
+
+def _known_image(conn, file):
+    if not IMAGE_FILE.fullmatch(str(file)) or not conn.execute("SELECT 1 FROM wiki_images WHERE file=?", (file,)).fetchone():
+        raise WikiError("Pick an uploaded image for the portrait.")
+    return file

@@ -1,10 +1,12 @@
 // The Wiki view: categories and pages (left), the page or its editor (middle), links and page info (right).
 // Pages are Markdown with [[Page title]] links (markdown.js); the server (wiki.py) stores them, keeps the
 // links for "Linked from", rewrites links when a page is renamed, and keeps deleted pages in a trash.
+// Images are uploaded (button, paste or drag and drop), written into the text as ![Caption|size](file),
+// open full-screen when clicked, and one can be the page's portrait.
 
 import { bindForm } from './forms.js';
-import { completeLink, normTitle, openLink, renderMarkdown } from './markdown.js';
-import { S, api, onWikiError, onWikiSaved, saveWikiNow, scheduleWikiSave } from './store.js';
+import { completeLink, imageMarkdown, imageUrl, insertBlock, normTitle, openLink, renderMarkdown, setImageSize } from './markdown.js';
+import { S, api, onWikiError, onWikiSaved, saveWikiNow, scheduleWikiSave, uploadImage } from './store.js';
 import { $, esc, toast } from './util.js';
 
 const W = S.wiki;
@@ -79,8 +81,9 @@ function renderNav() {
   else list = W.cat === 'all' ? W.pages : W.pages.filter(p => p.category === W.cat);
   const sub = p => W.results ? p.snippet || catName(p.category) : W.cat === 'recent' ? `${catName(p.category)} · ${when(p.updated)}`
     : W.cat === 'all' ? catName(p.category) : when(p.updated);
+  const thumb = p => { const f = p.portrait || W.pages.find(x => x.id === p.id)?.portrait; return f ? `<img class="thumb" src="${imageUrl(f)}" alt="" loading="lazy">` : ''; };
   $('#wikiList').innerHTML = list.map(p => `<li><button class="${W.cur?.id === p.id ? 'on' : ''}" data-page="${p.id}">
-      <b>${esc(p.title)}</b><span>${esc(sub(p))}</span></button></li>`).join('')
+      ${thumb(p)}<span class="txt"><b>${esc(p.title)}</b><span>${esc(sub(p))}</span></span></button></li>`).join('')
     || `<li class="hint">${W.results ? `Nothing matches "${esc(W.q)}".` : W.pages.length ? 'No pages here yet.' : 'No pages yet. Start with New page.'}</li>`;
 }
 
@@ -94,7 +97,7 @@ function pageHtml(p) {
       <div class="line"><button class="btn primary" data-w="edit" title="Edit (E)">Edit</button>
         <button class="btn sm bad" data-w="delete">${S.confirm.delPage === p.id ? 'Click again to move to trash' : 'Move to trash'}</button></div>
     </header>
-    <article class="wikitext" title="Double-click to edit">${html || '<p class="hint">This page is empty. Click Edit (or double-click here) to write it.</p>'}</article>`;
+    <article class="wikitext" title="Double-click to edit">${html || '<p class="hint">This page is empty. Click Edit (or double-click here) to write it. You can also drop images here.</p>'}</article>`;
 }
 
 function editorHtml(p) {
@@ -104,7 +107,9 @@ function editorHtml(p) {
         <label class="hint">Category <select class="field" data-path="category" id="wikiCat">${W.categories.map(c =>
           `<option value="${c.key}"${c.key === p.category ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
       </div>
-      <div class="line"><span class="hint" id="wikiSaved"></span><button class="btn primary" data-w="done" title="Done (Esc)">Done</button></div>
+      <div class="line"><span class="hint" id="wikiSaved"></span>
+        <button class="btn" data-w="addimage" title="Add images (or paste them, or drag them onto the text)">Add image</button>
+        <button class="btn primary" data-w="done" title="Done (Esc)">Done</button></div>
     </header>
     <div class="wikiedit">
       <div class="pane"><textarea class="field" id="wikiBody" data-path="body" spellcheck="true"
@@ -113,7 +118,8 @@ function editorHtml(p) {
       <div class="pane"><div class="wikitext preview" id="wikiPreview"></div></div>
     </div>
     <p class="hint mdhelp"><code>[[Page]]</code> or <code>[[Page|text]]</code> link · <code># Heading</code> · <code>**bold**</code> · <code>*italic*</code>
-      · <code>- list</code> · <code>- [ ] task</code> · <code>&gt; quote</code> · <code>| table |</code> · <code>---</code> line</p>`;
+      · <code>- list</code> · <code>- [ ] task</code> · <code>&gt; quote</code> · <code>| table |</code> · <code>---</code> line
+      · images: paste or drop them, <code>![Caption|small](…)</code> (small, medium or full)</p>`;
 }
 
 async function trashHtml() {
@@ -139,7 +145,7 @@ async function renderMain() {
 
 function updatePreview() {
   const el = $('#wikiPreview');
-  if (el && W.cur) el.innerHTML = renderMarkdown(W.cur.body, resolve) || '<p class="hint">The preview shows here.</p>';
+  if (el && W.cur) el.innerHTML = renderMarkdown(W.cur.body, resolve, { editable: true }) || '<p class="hint">The preview shows here.</p>';
 }
 
 // ---------- right column: links and page info ----------
@@ -150,7 +156,11 @@ function renderSide() {
   const link = x => `<li><a class="wl" href="#" data-page="${x.id}">${esc(x.title)}</a> <small class="hint">${esc(catName(x.category))}</small></li>`;
   const out = p.links.map(l => (l.id ? `<li><a class="wl" href="#" data-page="${l.id}">${esc(l.title)}</a></li>`
     : `<li><a class="wl missing" href="#" data-new="${esc(l.text || l.target)}" title="No page yet: click to create it">${esc(l.text || l.target)}</a> <small class="hint">not written yet</small></li>`)).join('');
-  box.innerHTML = `<div class="blk"><h4>Linked from <span class="hint">${p.backlinks.length}</span></h4>
+  const portrait = p.portrait
+    ? `<div class="portraitblk"><button class="portrait" data-lbopen="${p.portrait}" title="Open full-screen"><img src="${imageUrl(p.portrait)}" alt="Portrait of ${esc(p.title)}"></button>
+        <div class="line"><button class="link" data-w="portrait-upload">Change</button><button class="link" data-w="portrait-clear">Remove</button></div></div>`
+    : `<button class="portrait empty" data-w="portrait-upload">Add a portrait<small>a face, a map, a crest… (or open an image on the page and use it)</small></button>`;
+  box.innerHTML = `${portrait}<div class="blk"><h4>Linked from <span class="hint">${p.backlinks.length}</span></h4>
       ${p.backlinks.length ? `<ul class="linklist">${p.backlinks.map(link).join('')}</ul>` : '<p class="hint">No page links here yet. Link to it with [[' + esc(p.title) + ']].</p>'}</div>
     <div class="blk"><h4>Links to <span class="hint">${p.links.length}</span></h4>
       ${out ? `<ul class="linklist">${out}</ul>` : '<p class="hint">This page doesn\'t link anywhere yet.</p>'}</div>
@@ -213,6 +223,135 @@ function acceptSuggest(i = sugg.i) {
   ta.focus();
 }
 
+// ---------- images: upload, sizes, portrait ----------
+
+const MAX_MB = 20;
+let picking = 'text';                        // what the file picker is for: 'text' or 'portrait'
+
+/** Upload image files; returns the uploaded ones ({ file, name }). Errors are shown, the rest still upload. */
+async function uploadAll(files) {
+  // the server checks the bytes too; this just skips uploads it would refuse (SVG, PDF, ...)
+  const list = [...files].filter(f => /^image\/(png|jpeg|gif|webp)$/.test(f.type) || (!f.type && /\.(png|jpe?g|gif|webp)$/i.test(f.name)));
+  if (!list.length) { toast('Only images can be added: PNG, JPEG, GIF or WebP.'); return []; }
+  const status = $('#wikiSaved');
+  if (status) status.textContent = `Uploading ${list.length > 1 ? `${list.length} images` : 'the image'}…`;
+  const done = [];
+  for (const f of list) {
+    if (f.size > MAX_MB * 1024 * 1024) { toast(`${f.name} is larger than ${MAX_MB} MB.`); continue; }
+    try { done.push({ ...(await uploadImage(f)), name: f.name }); } catch (e) { toast(`${f.name || 'Image'}: ${e.message}`); }
+  }
+  if (status) status.textContent = done.length ? '' : 'Not uploaded';
+  return done;
+}
+
+/** Put uploaded images into the open page: at the caret while editing, at the end otherwise. */
+async function addImages(files) {
+  const page = W.cur;
+  if (!page) return;
+  const caretAt = $('#wikiBody')?.selectionStart;
+  const done = await uploadAll(files);
+  if (!done.length || W.cur !== page) return;
+  const snippet = done.map(d => imageMarkdown(d.file, d.name)).join('\n');
+  const ta = W.editing && $('#wikiBody');
+  if (ta) {
+    const at = insertBlock(ta.value, caretAt ?? ta.value.length, snippet);
+    ta.value = at.text;
+    ta.setSelectionRange(at.caret, at.caret);
+    ta.focus();
+    ta.dispatchEvent(new Event('input', { bubbles: true }));       // saves and redraws the preview like typing
+  } else {
+    page.body = insertBlock(page.body, page.body.length, snippet).text;
+    renderMain();
+    scheduleWikiSave();
+    toast(`Added ${done.length > 1 ? `${done.length} images` : 'the image'} at the end of the page.`);
+  }
+}
+
+async function setPortrait(file) {
+  if (!W.cur) return;
+  W.cur.portrait = file || null;
+  renderSide();
+  try { await saveWikiNow(); } catch { /* shown by onWikiError */ }
+}
+
+function pickFiles(what) {
+  picking = what;
+  const input = $('#wikiFile');
+  input.multiple = what === 'text';
+  input.value = '';
+  input.click();
+}
+
+// ---------- full-screen viewer ----------
+
+const LB = { list: [], i: 0, zoom: false };
+
+/** Open the viewer on `file`, with the open page's portrait and images to step through. */
+function openViewer(file) {
+  const files = [W.cur?.portrait, ...[...document.querySelectorAll('#wikiPage img[data-img]')].map(x => x.dataset.img)].filter(Boolean);
+  LB.list = [...new Set(files)];
+  if (!LB.list.includes(file)) LB.list.unshift(file);
+  LB.i = LB.list.indexOf(file);
+  LB.zoom = false;
+  showViewer();
+  const dlg = $('#lightbox');
+  if (!dlg.open) dlg.showModal();
+}
+
+function showViewer() {
+  const file = LB.list[LB.i], dlg = $('#lightbox');
+  const img = dlg.querySelector('.lb-stage img');
+  const shown = document.querySelector(`#wikiPage img[data-img="${file}"]`);
+  img.src = imageUrl(file);
+  img.alt = shown?.alt || '';
+  dlg.querySelector('.lb-cap').textContent = shown?.alt || (file === W.cur?.portrait ? `${W.cur.title}: portrait` : '');
+  dlg.querySelector('.lb-count').textContent = LB.list.length > 1 ? `${LB.i + 1} of ${LB.list.length}` : '';
+  dlg.querySelectorAll('.lb-nav').forEach(b => { b.hidden = LB.list.length < 2; });
+  const isPortrait = file === W.cur?.portrait;
+  Object.assign(dlg.querySelector('[data-lb="portrait"]'), { disabled: isPortrait || !W.cur, textContent: isPortrait ? 'Page portrait' : 'Use as page portrait' });
+  setZoom(LB.zoom);
+}
+
+function setZoom(on, at) {
+  LB.zoom = on;
+  const dlg = $('#lightbox'), stage = dlg.querySelector('.lb-stage'), img = stage.querySelector('img');
+  stage.classList.toggle('zoomed', on);
+  dlg.querySelector('[data-lb="zoom"]').textContent = on ? 'Fit to screen' : 'Actual size';
+  if (on && at) {           // keep the clicked spot under the pointer
+    stage.scrollLeft = at.x * img.naturalWidth - at.cx;
+    stage.scrollTop = at.y * img.naturalHeight - at.cy;
+  }
+}
+
+function initViewer() {
+  const dlg = $('#lightbox'), stage = dlg.querySelector('.lb-stage'), img = stage.querySelector('img');
+  let drag = null, moved = false;
+  dlg.addEventListener('click', e => {
+    const a = e.target.closest('[data-lb]')?.dataset.lb;
+    if (a === 'close') dlg.close();
+    else if (a === 'prev' || a === 'next') { LB.i = (LB.i + (a === 'next' ? 1 : -1) + LB.list.length) % LB.list.length; LB.zoom = false; showViewer(); }
+    else if (a === 'zoom') setZoom(!LB.zoom);
+    else if (a === 'portrait') { setPortrait(LB.list[LB.i]); showViewer(); toast('Set as the page portrait.'); }
+    else if (e.target === img && !moved) {
+      const r = img.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+      setZoom(!LB.zoom, { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height, cx: e.clientX - sr.left, cy: e.clientY - sr.top });
+    } else if (e.target === stage && !LB.zoom) dlg.close();       // a click beside the picture closes it
+  });
+  dlg.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); dlg.querySelector(`[data-lb="${e.key === 'ArrowRight' ? 'next' : 'prev'}"]`).click(); }
+    if (e.key === 'z' || e.key === 'Z') setZoom(!LB.zoom);
+  });
+  // drag to look around a zoomed map
+  stage.addEventListener('pointerdown', e => { if (LB.zoom) { drag = { x: e.clientX, y: e.clientY, l: stage.scrollLeft, t: stage.scrollTop }; moved = false; } });
+  window.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+    stage.scrollLeft = drag.l - dx; stage.scrollTop = drag.t - dy;
+  });
+  window.addEventListener('pointerup', () => { drag = null; setTimeout(() => { moved = false; }); });
+}
+
 // ---------- events ----------
 
 function onClick(e) {
@@ -232,6 +371,15 @@ function onClick(e) {
       openPage(p.id, { back: false });
     }, err => toast(err.message));
   }
+  const lb = e.target.closest('[data-lbopen]') || (e.target.matches('#wikiPage img[data-img]') && e.target);
+  if (lb) { e.preventDefault(); return openViewer(lb.dataset.lbopen || lb.dataset.img); }
+  const sz = e.target.closest('[data-imgsize]');
+  if (sz && W.cur && W.editing) {
+    const ta = $('#wikiBody'), at = ta.selectionStart;
+    ta.value = setImageSize(ta.value, sz.dataset.file, sz.dataset.imgsize);
+    ta.setSelectionRange(Math.min(at, ta.value.length), Math.min(at, ta.value.length));
+    return ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }
   const sg = e.target.closest('[data-sug]');
   if (sg) { e.preventDefault(); return acceptSuggest(+sg.dataset.sug); }
   const a = e.target.closest('[data-w]')?.dataset.w;
@@ -239,6 +387,9 @@ function onClick(e) {
   if (a !== 'delete') S.confirm.delPage = null;
   if (a === 'edit') { W.editing = true; renderMain(); return $('#wikiBody')?.focus(); }
   if (a === 'done') return finishEditing();
+  if (a === 'addimage') return pickFiles('text');
+  if (a === 'portrait-upload') return pickFiles('portrait');
+  if (a === 'portrait-clear') return setPortrait(null);
   if (a === 'back') return goBack();
   if (a === 'delete') {
     if (S.confirm.delPage !== W.cur.id) { S.confirm.delPage = W.cur.id; return renderMain(); }
@@ -270,9 +421,38 @@ export function initWiki() {
   const view = $('#view-wiki');
   view.addEventListener('click', onClick);
   view.addEventListener('dblclick', e => {
-    if (W.cur && !W.editing && e.target.closest('#wikiPage .wikitext') && !e.target.closest('a')) { W.editing = true; renderMain(); $('#wikiBody')?.focus(); }
+    if (W.cur && !W.editing && e.target.closest('#wikiPage .wikitext') && !e.target.closest('a,img')) { W.editing = true; renderMain(); $('#wikiBody')?.focus(); }
   });
   $('#newPage').onclick = () => newPage();
+  initViewer();
+  $('#wikiFile').addEventListener('change', async e => {
+    const files = [...e.target.files];
+    if (!files.length) return;
+    if (picking === 'portrait') { const [d] = await uploadAll(files.slice(0, 1)); if (d) setPortrait(d.file); }
+    else addImages(files);
+  });
+  // paste a screenshot into the text
+  $('#wikiPage').addEventListener('paste', e => {
+    if (e.target.id !== 'wikiBody') return;
+    const files = [...(e.clipboardData?.files || [])].filter(f => f.type.startsWith('image/'));
+    if (files.length) { e.preventDefault(); addImages(files); }
+  });
+  // drop images on the page (or its editor); dropping files anywhere else in the wiki does nothing
+  const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+  view.addEventListener('dragover', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    const onPage = !!e.target.closest('#wikiPage') && W.cur && !W.trashOpen;
+    e.dataTransfer.dropEffect = onPage ? 'copy' : 'none';
+    $('#wikiPage').classList.toggle('dropping', onPage);
+  });
+  view.addEventListener('dragleave', e => { if (!e.relatedTarget || !view.contains(e.relatedTarget)) $('#wikiPage').classList.remove('dropping'); });
+  view.addEventListener('drop', e => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    $('#wikiPage').classList.remove('dropping');
+    if (e.target.closest('#wikiPage') && W.cur && !W.trashOpen) addImages(e.dataTransfer.files);
+  });
   $('#wikiTrash').onclick = async () => {
     if (W.cur) await saveWikiNow().catch(() => {});
     W.trashOpen = !W.trashOpen;
@@ -337,7 +517,7 @@ export function initWiki() {
     const titleChanged = !W.pages.some(p => p.id === res.id && p.title === res.title);
     if (W.cur?.id === res.id) {
       // keep what's being typed; take the server's links, dates and (when nothing newer is waiting) the text
-      Object.assign(W.cur, { links: res.links, backlinks: res.backlinks, updated: res.updated, title: res.title,
+      Object.assign(W.cur, { links: res.links, backlinks: res.backlinks, updated: res.updated, title: res.title, portrait: res.portrait,
         ...(latest && !W.editing ? { body: res.body } : {}) });
       const s = $('#wikiSaved');
       if (s && latest) s.textContent = 'Saved';
@@ -348,7 +528,7 @@ export function initWiki() {
       if (W.editing) updatePreview();
     } else {
       const li = W.pages.find(p => p.id === res.id);
-      if (li) Object.assign(li, { category: res.category, updated: res.updated });
+      if (li) Object.assign(li, { category: res.category, updated: res.updated, portrait: res.portrait });
     }
     renderNav(); renderSide();
     if (!W.editing && W.cur?.id === res.id) renderMain();

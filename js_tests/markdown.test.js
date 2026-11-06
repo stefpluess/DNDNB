@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { completeLink, normTitle, openLink, renderMarkdown } from '../static/js/markdown.js';
+import { completeLink, imageMarkdown, insertBlock, normTitle, openLink, renderMarkdown, setImageSize } from '../static/js/markdown.js';
 
 const pages = { durnan: { id: 3 }, 'the yawning portal': { id: 7 } };
 const md = text => renderMarkdown(text, t => pages[normTitle(t)] || null);
@@ -45,4 +45,44 @@ test('the link being typed, and completing it', () => {
   assert.equal(openLink('[[Durnan|the', 12), null);
   assert.deepEqual(completeLink('Met [[Dur and', 9, 'Durnan'), { text: 'Met [[Durnan]] and', caret: 14 });
   assert.deepEqual(completeLink('Met [[Dur]]', 9, 'Durnan'), { text: 'Met [[Durnan]]', caret: 14 });
+});
+
+// ---------- images ----------
+
+const F = '0123456789abcdef.png';
+
+test('an image on its own line is a figure, with caption and size', () => {
+  assert.equal(md(`![Map of the <b>city</b>|small](${F})`),
+    `<figure class="wimg small"><img src="/api/wiki/images/${F}" alt="Map of the &lt;b&gt;city&lt;/b&gt;" loading="lazy" data-img="${F}"><figcaption>Map of the &lt;b&gt;city&lt;/b&gt;</figcaption></figure>`);
+  assert.match(md(`![](${F})`), /^<figure class="wimg full"><img [^>]+><\/figure>$/);
+  assert.match(md(`![a|odd](${F})`), /class="wimg full".*alt="a\|odd"/);          // unknown size: part of the caption
+});
+
+test('several images on one line sit side by side; images inside text stay inline', () => {
+  assert.match(md(`![a](${F}) ![b](${F})`), /^<div class="imgrow"><figure[^]*<\/figure><figure[^]*<\/figure><\/div>$/);
+  assert.match(md(`Here ![face](${F}) is Durnan`), /^<p>Here <img class="inline" src="\/api\/wiki\/images\/0123456789abcdef.png" alt="face"/);
+  assert.equal(md('text\n![x](' + F + ')'), `<p>text</p>${md('![x](' + F + ')')}`);
+});
+
+test('only uploaded files become images: never a web address or a path', () => {
+  for (const src of ['https://evil.example/x.png', '../campaign.db', 'javascript:alert(1)', '0123456789abcdef.svg']) {
+    assert.ok(!md(`![x](${src})`).includes('<img'), src);
+  }
+});
+
+test('the preview offers size buttons', () => {
+  const html = renderMarkdown(`![Map|medium](${F})`, () => null, { editable: true });
+  assert.match(html, /data-imgsize="medium" data-file="0123456789abcdef.png"/);
+  assert.match(html, /<button type="button" class="on" data-imgsize="medium"/);
+});
+
+test('changing a size, writing a new image, inserting on its own lines', () => {
+  assert.equal(setImageSize(`![Map](${F}) and ![Map|small](${F}) ![x](aaaaaaaaaaaaaaaa.jpg)`, F, 'medium'),
+    `![Map|medium](${F}) and ![Map|medium](${F}) ![x](aaaaaaaaaaaaaaaa.jpg)`);
+  assert.equal(setImageSize(`![Map|small](${F})`, F, 'full'), `![Map](${F})`);
+  assert.equal(imageMarkdown(F, 'Tavern [map].png'), `![Tavern map](${F})`);
+  assert.equal(imageMarkdown(F, 'image.png'), `![](${F})`);
+  assert.deepEqual(insertBlock('ab', 1, 'X'), { text: 'a\nX\nb', caret: 4 });
+  assert.deepEqual(insertBlock('a\n', 2, 'X'), { text: 'a\nX\n', caret: 4 });
+  assert.deepEqual(insertBlock('', 0, 'X'), { text: 'X\n', caret: 2 });
 });

@@ -27,10 +27,10 @@ In the browser console, `ledger.S` shows the app state and `ledger.combat` the c
 - PCs in combat share HP, slots and Exhaustion with their sheet.
 - Wiki view: campaign notes for the DM only (players never see the app). Markdown pages in categories
   (Unsorted is the inbox), `[[Page title]]` / `[[Page title|text]]` links, "Linked from", renaming rewrites
-  links, search, a trash (nothing is erased). One campaign. Planned next, in order: images (upload, paste,
-  drag-and-drop, sizes, full-screen view, page portraits; files in `data/wiki_images/`); category info boxes,
-  tags, pages inside pages; links to characters/monsters/fights with Add to combat, an image gallery,
-  Markdown export.
+  links, search, a trash (nothing is erased). One campaign. Images: uploaded (button, paste, drag and drop),
+  written as `![Caption|small|medium](file)`, a full-screen viewer with zoom, one portrait per page.
+  Planned next, in order: category info boxes, tags, pages inside pages; links to characters/monsters/fights
+  with Add to combat, an image gallery (with images no page uses), Markdown export.
 
 ## Layout
 Python (the server owns storage and all rules math for sheets and homebrew):
@@ -40,14 +40,18 @@ Python (the server owns storage and all rules math for sheets and homebrew):
 - `rules.py`: character sheet math; `derive(sheet)`, `item_from_srd()`
 - `homebrew.py`: homebrew creatures; `normalize()` fills mods, saves, PB/XP from CR, attacks, auto text
 - `wiki.py`: wiki pages (`wiki_pages`), their links as normalized titles (`wiki_links`, so links to pages
-  that don't exist yet are kept), rename rewriting, search, soft delete (`deleted` column)
+  that don't exist yet are kept), rename rewriting, search, soft delete (`deleted` column); images in
+  `data/wiki_images/` named `<16 hex of SHA-256>.<ext>` (same picture = same file), recognized by their bytes
+  (PNG/JPEG/GIF/WebP only, never SVG), listed in `wiki_images`; served by `GET /api/wiki/images/<file>`.
+  Pages only ever show uploaded files, never web addresses.
 - `common.py`: shared constants and formatting, served to the browser as `GET /api/meta`
 - `subclasses.py` + `subclass_data/`: the subclass engine and catalog; `summons.py`: summoned creatures
 - `import_srd.py`: Open5e importer; downloads everything before writing, never empties a category,
   prints a sanity check; `--save-dir` / `--from-dir` for offline copies
 - `db.py`: SQLite. `data/srd.db` = reference data (safe to rebuild).
-  `data/campaign.db` = the user's characters, homebrew, saved encounters (prepared fights) and the
-  current encounter. New tables are added with CREATE TABLE IF NOT EXISTS.
+  `data/campaign.db` = the user's characters, homebrew, saved encounters (prepared fights), the wiki and the
+  current encounter (wiki images live next to it in `data/wiki_images/`). New tables are added with
+  CREATE TABLE IF NOT EXISTS; new columns on existing tables go in `db.CAMPAIGN_COLUMNS` (added, never dropped).
   **Never touch campaign.db destructively.**
 
 Front end, `static/js/` (plain ES modules, no framework):
