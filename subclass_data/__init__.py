@@ -4,7 +4,7 @@ Summaries are short reminders in our own words, not the books' text. Numbers tha
 (dice, uses, AC formulas) follow the books as far as we know them: check them against your copy.
 One module per book; each adds its entries with add(key, S(...)).
 """
-from . import phb2014, phb2024, tasha  # noqa: F401  (importing registers the entries)
+from . import forge, phb2014, phb2024, tasha  # noqa: F401  (importing registers the entries)
 from .base import CATALOG  # noqa: F401
 
 # Older versions and the 2024 version that replaces them. The 2024 rules are the campaign's rules, so the
@@ -15,6 +15,8 @@ SUPERSEDED = {
     "fey-wanderer-tce": "fey-wanderer-2024", "psi-warrior-tce": "psi-warrior-2024", "soulknife-tce": "soulknife-2024",
     "aberrant-mind-tce": "aberrant-2024", "clockwork-soul-tce": "clockwork-2024", "stars-tce": "stars-2024",
     "glory-tce": "glory-2024", "mercy-tce": "mercy-2024",
+    # Tasha's Artificer specialists reworked in Eberron: Forge of the Artificer (2024 rules)
+    "armorer-tce": "armorer-foa", "battle-smith-tce": "battle-smith-foa", "alchemist-tce": "alchemist-foa", "artillerist-tce": "artillerist-foa",
     # 2014 Player's Handbook subclasses with a 2024 version
     "berserker-2014": "berserker-2024", "lore-2014": "lore-2024", "valor-2014": "valor-2024",
     "life-2014": "life-2024", "light-2014": "light-2024", "trickery-2014": "trickery-2024", "war-2014": "war-2024",

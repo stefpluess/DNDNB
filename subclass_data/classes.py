@@ -1,4 +1,4 @@
-"""Class features by level: the 2024 Player's Handbook classes and the Artificer (Tasha's).
+"""Class features by level: the 2024 Player's Handbook classes and the 2024 Artificer (Forge of the Artificer).
 
 Summaries are reminders in our own words; check the book for the exact rules. Features whose numbers the
 app already computes in rules.py (Rage, Sneak Attack, Martial Arts, Unarmored Defense and Movement, spell
@@ -259,17 +259,20 @@ CLASS_FEATURES = {
         F(20, "Signature Spells", "Two 3rd-level spells always prepared; cast each once per Short Rest without a slot.",
           resource=("signature_spells", "Signature Spells", 2, SR)),
     ],
+    # Eberron: Forge of the Artificer (2024 rules), built from online summaries: verify against the book
     "artificer": [
-        F(1, "Magical Tinkering", "Imbue a Tiny nonmagical object with a minor magical property (light, message, sound, odor or image)."),
-        F(1, "Spellcasting", "Intelligence casting from the Artificer list through tools or an infused item."),
-        F(2, "Infuse Item", "Know infusions (4, 6 at 6, 8 at 10, 10 at 14, 12 at 18) and infuse items after a Long Rest (2, 3 at 6, 4 at 10, 5 at 14, 6 at 18)."),
-        F(3, "The Right Tool for the Job", "Create a set of artisan's tools in 1 hour."),
-        F(6, "Tool Expertise", "Double your proficiency bonus on checks with tools you're proficient with."),
+        F(1, "Spellcasting", "Intelligence casting from the Artificer list through tools or a replicated item (half caster, slots from level 1)."),
+        F(1, "Tinker's Magic", "Mending cantrip; Magic action: make a simple adventuring item (rope, a lamp, tools...) that lasts until a Long Rest. Int-modifier times per Long Rest.",
+          resource=("tinkers_magic", "Tinker's Magic", "max(1, int)", LR)),
+        F(2, "Replicate Magic Item", "Know magic item plans (4; 5 at 6, 6 at 10, 7 at 14, 8 at 18) and make that many items after a Long Rest (2; 3 at 6, 4 at 10, 5 at 14, 6 at 18); more plan tables open at 6, 10 and 14."),
+        F(3, "Artificer Subclass", "Your specialization (Alchemist, Armorer, Artillerist, Battle Smith or Cartographer)."),
+        F(6, "Magic Item Tinker", "Charge a magic item from a spell slot, drain a replicated item into a spell slot (Bonus Action), or transmute one replicated item into another."),
         F(7, "Flash of Genius", "Reaction: add your Int modifier to an ability check or save of a creature within 30 ft. Int-modifier times per Long Rest."),
         F(10, "Magic Item Adept", "Attune to 4 items; craft common and uncommon items faster and cheaper."),
-        F(11, "Spell-Storing Item", "Store a 1st- or 2nd-level Artificer spell in an item; it can be cast twice-Int-modifier times."),
-        F(14, "Magic Item Savant", "Attune to 5 items; ignore class, race, spell and level requirements on magic items."),
+        F(11, "Spell-Storing Item", "Store a 1st- to 3rd-level Artificer spell in an item; it can be cast from it twice-Int-modifier times."),
+        F(14, "Advanced Artifice", "Attune to 5 items, and more magical crafting options (verify the details in the book)."),
         F(18, "Magic Item Master", "Attune to 6 items."),
-        F(20, "Soul of Artifice", "+1 to all saving throws per item you're attuned to; Reaction when you drop to 0 HP: end one infusion to drop to 1 HP instead."),
+        EPIC_BOON,
+        F(20, "Soul of Artifice", "Cheat death by destroying a replicated item, and stronger bonds with your magic items (verify the details in the book)."),
     ],
 }

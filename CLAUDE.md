@@ -93,7 +93,7 @@ Front end, `static/js/` (plain ES modules, no framework):
   in rules.py, class resources per level (RESOURCES), Jack of All Trades (skills only), Rage (damage,
   B/P/S resistance via the Raging condition, ends concentration), Petrified resistances, Sneak Attack,
   Divine Smite (+1d8 vs Fiend/Undead), Great Weapon / Thrown / Two-Weapon / Unarmed Fighting.
-- Subclasses: 118 (PHB 2024, PHB 2014, Tasha's) in `subclass_data/` (one module per book), turned into
+- Subclasses: 123 (PHB 2024, PHB 2014, Tasha's, Forge of the Artificer) in `subclass_data/` (one module per book), turned into
   effects by `subclasses.py` (see its docstring for the effect keys) and applied in `rules.derive`.
   Summaries are in our own words, never the books' text. Summoned creatures (Wildfire Spirit, Steel
   Defender, Eldritch Cannon, Primal Companion) are built by `summons.py` as monster-shaped stat blocks.
@@ -104,7 +104,10 @@ Front end, `static/js/` (plain ES modules, no framework):
   Indomitable, Primal Champion / Body and Mind (scores to 25), Foe Slayer.
 - Spell effects in combat (`SPELL_EFFECTS` in combat.js): Hunter's Mark, Hex (marks add damage to the
   caster's hits and can be moved), Bless, Bane, Shield of Faith, Haste, Shield, Divine Favor.
-- Artificer (Tasha's) is supported as a class.
+- Artificer: the class features follow Eberron: Forge of the Artificer (2024 rules), and its subclasses
+  are in `subclass_data/forge.py` (Armorer with Dreadnaught/Guardian/Infiltrator, Battle Smith with the
+  2024 Steel Defender, Alchemist, Artillerist, Cartographer). Built from online summaries without the
+  book: entries marked "(verify)" need checking. The Tasha's versions stay as "older versions".
 - Species, backgrounds and feats (2024 PHB) in `subclass_data/origins.py`, through the same engine. Ability
   score increases from backgrounds and feats are typed into the scores, never added automatically.
 - Multiclassing: `sheet.multiclass` = extra classes [{class_name, level, subclass}]; `class_list()` in

@@ -858,7 +858,7 @@ def derive(sheet):
                      "summon_info": [{"key": k, "name": summons.SUMMONS[k]["name"], "forms": summons.SUMMONS[k]["forms"]} for k in sub["summons"]]}
         if sub["subclasses"] else None,
         "subclasses": sub["subclasses"],
-        "class_source": "Tasha's" if cls == "artificer" else "PHB 2024",
+        "class_source": "Forge of the Artificer" if cls == "artificer" else "PHB 2024",
         "spells": spell_rows(sheet, spell, level, sub, m),
         "defenses": sub["defenses"], "cdef": sub["cdef"], "ac_cond": sub["ac_cond"],
         "dex_save_adv": sub["dex_save_adv"], "auras": sub["auras"], "save_adv": sorted(set(sub["save_adv"])),

@@ -31,7 +31,7 @@ class Engine(unittest.TestCase):
         mods = {a: 2 for a in ("str", "dex", "con", "int", "wis", "cha")}
         for key, sc in CATALOG.items():
             self.assertIn(sc["class"], rules.CLASS_DEFAULTS, key)
-            self.assertIn(sc["source"], ("PHB 2024", "PHB 2014", "Tasha's"), key)
+            self.assertIn(sc["source"], ("PHB 2024", "PHB 2014", "Tasha's", "Forge of the Artificer"), key)
             names = [f["name"] for f in sc["features"]]
             self.assertEqual(len(names), len(set(names)), f"{key}: duplicate feature names")
             for level in (1, 3, 6, 10, 14, 20):
@@ -163,13 +163,14 @@ class OnTheSheet(unittest.TestCase):
 
     def test_the_catalog_is_complete(self):
         from collections import Counter
-        self.assertEqual(Counter(v["source"] for v in CATALOG.values()), {"PHB 2024": 48, "PHB 2014": 40, "Tasha's": 30})
+        self.assertEqual(Counter(v["source"] for v in CATALOG.values()), {"PHB 2024": 48, "PHB 2014": 40, "Tasha's": 30, "Forge of the Artificer": 5})
 
     def test_older_versions_point_to_the_2024_one(self):
         from subclass_data import SUPERSEDED
         for old, new in SUPERSEDED.items():
             self.assertIn(old, CATALOG)
-            self.assertEqual((CATALOG[new]["source"], CATALOG[new]["class"]), ("PHB 2024", CATALOG[old]["class"]), old)
+            self.assertIn(CATALOG[new]["source"], ("PHB 2024", "Forge of the Artificer"), old)
+            self.assertEqual(CATALOG[new]["class"], CATALOG[old]["class"], old)
         d = rules.derive(char("ranger", 3, "fey-wanderer-tce"))
         self.assertTrue([w for w in d["warnings"] if "has a 2024 version, Fey Wanderer (PHB 2024)" in w])
         cat = {c["key"]: c for c in subclasses.catalog()}
@@ -336,6 +337,18 @@ class OnTheSheet(unittest.TestCase):
         ek = char("fighter", 6, "eldritch-knight-2024")
         ek["multiclass"] = [{"class_name": "Wizard", "level": 3}]
         self.assertEqual(rules.derive(ek)["suggested_slots"][:3], [4, 3, 2])       # caster level 3 + 6 // 3 = 5
+
+    def test_forge_of_the_artificer_armorer(self):
+        s = char("artificer", 15, "armorer-foa", int=18)
+        s["choices"] = {"Armor Model": "dreadnaught"}
+        fd = next(a for a in rules.derive(s)["attacks"] if a["name"] == "Force Demolisher")
+        self.assertEqual((fd["damage"], fd["to_hit"]), ("2d6+4 force", 4 + 5))
+        s["level"], s["choices"] = 3, {"Armor Model": "infiltrator"}
+        d = rules.derive(s)
+        ll = next(a for a in d["attacks"] if a["name"] == "Lightning Launcher")
+        self.assertEqual((ll["damage"], d["speed"]), ("1d6+4 lightning", 35))
+        self.assertTrue([w for w in rules.derive(char("artificer", 3, "armorer-tce"))["warnings"] if "Armorer (Forge of the Artificer)" in w])
+        self.assertEqual(rules.derive(char("artificer", 1))["class_source"], "Forge of the Artificer")
 
     def test_wrong_class_or_level_warns(self):
         self.assertTrue([w for w in rules.derive(char("wizard", 5, "champion-2024"))["warnings"] if "Fighter subclass" in w])

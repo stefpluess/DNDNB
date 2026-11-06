@@ -11,6 +11,7 @@ from common import ABILITY_LONG, mod
 SUMMONS = {
     "wildfire_spirit": {"name": "Wildfire Spirit", "cost": "wild_shape", "forms": None, "class": "druid"},
     "steel_defender": {"name": "Steel Defender", "cost": None, "forms": None, "class": "artificer"},
+    "steel_defender_2024": {"name": "Steel Defender", "cost": None, "forms": None, "class": "artificer"},
     "eldritch_cannon": {"name": "Eldritch Cannon", "cost": "eldritch_cannon", "class": "artificer",
                         "forms": [("flamethrower", "Flamethrower"), ("ballista", "Force Ballista"), ("protector", "Protector")]},
     "primal_companion": {"name": "Primal Companion", "cost": None, "class": "ranger",
@@ -74,6 +75,15 @@ def build(key, sheet, derived, form=None):
                  + (f"; on a miss the attacker takes 1d4 + {m['int']} force." if level >= 15 else "."), "REACTION"),
         ], traits=[("Vigilant", "Can't be surprised."), ("Summoned", f"Acts on {owner}'s turn; takes the Dodge action unless commanded (Bonus Action).")],
             immune="Poison", cond_immune="Charmed, Exhaustion, Poisoned", note="natural armor")
+    if key == "steel_defender_2024":
+        # Forge of the Artificer (from online summaries: verify): HP 5 + 5 x level, AC 12 + Int, Rend 1d8 + Int force
+        return _creature(f"Steel Defender ({owner})", "Medium", "Construct", 12 + m["int"], 5 + 5 * level, {"walk": 40},
+                         {"str": 14, "dex": 12, "con": 14, "int": 4, "wis": 10, "cha": 6}, [
+            _attack("Force-Empowered Rend", "SPELL", f"Melee attack using {owner}'s spell attack modifier, reach 5 ft.", spell_atk, "1d8", m["int"], "Force", reach=5),
+            _act("Repair", f"Mends a construct or object within 5 ft: it regains 2d8 + {pb} HP (limited uses: verify)."),
+            _act("Deflect Attack", "Reaction: impose Disadvantage on an attack against a creature within 5 ft (other than itself).", "REACTION"),
+        ], traits=[("Vigilant", "Can't be surprised."), ("Summoned", f"Acts on {owner}'s turn; can take one of {owner}'s Extra Attack attacks.")],
+            immune="Poison", cond_immune="Charmed, Exhaustion, Poisoned", note="12 + Int (verify)")
     if key == "eldritch_cannon":
         extra = "+1d8 (Explosive Cannon) " if level >= 9 else ""
         dice = "3d8" if level >= 9 else "2d8"
