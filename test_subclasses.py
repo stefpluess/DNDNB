@@ -283,6 +283,32 @@ class OnTheSheet(unittest.TestCase):
         self.assertEqual(len(cat["species"]), 10)
         self.assertEqual(len(cat["backgrounds"]), 16)
 
+    def test_spells_cantrip_scaling_eldritch_blast_and_invocations(self):
+        w = char("warlock", 5, cha=18, dex=14)
+        w["spells"] = [{"name": "Eldritch Blast", "level": 0, "attack": True, "dice": "1d10", "type": "force"},
+                       {"name": "Poison Spray", "level": 0, "save": "con", "dice": "1d12", "type": "poison"},
+                       {"name": "Hold Person", "level": 2, "save": "wis", "dice": ""}]
+        rows = {r["name"]: r for r in rules.derive(w)["spells"]}
+        self.assertEqual((rows["Eldritch Blast"]["damage"], rows["Eldritch Blast"]["to_hit"]), ("1d10", 3 + 4))
+        self.assertIn("2 beams", rows["Eldritch Blast"]["note"])
+        self.assertEqual((rows["Poison Spray"]["damage"], rows["Poison Spray"]["dc"], rows["Hold Person"]["to_hit"]), ("2d12", 8 + 3 + 4, None))
+        w["choices"] = {"Eldritch Invocations": ["agonizing", "armor"]}
+        d = rules.derive(w)
+        self.assertEqual(next(r for r in d["spells"] if r["name"] == "Eldritch Blast")["damage"], "1d10+4")
+        self.assertEqual(d["ac"], 13 + 2)                                            # Armor of Shadows
+        inv = next(f for f in d["class_features"] if f["name"] == "Eldritch Invocations")
+        self.assertEqual(inv["choice"], "Agonizing Blast, Armor of Shadows")
+        c = char("cleric", 11, wis=18)
+        c["choices"] = {"Blessed Strikes": "potent"}
+        c["spells"] = [{"name": "Sacred Flame", "level": 0, "save": "dex", "dice": "1d8", "type": "radiant"}]
+        self.assertEqual(rules.derive(c)["spells"][0]["damage"], "3d8+4")          # level 11: three dice, + Wis
+
+    def test_spell_from_srd(self):
+        sp = rules.spell_from_srd({"key": "srd-2024_fireball", "name": "Fireball", "level": 3, "saving_throw_ability": "dexterity",
+                                   "damage_roll": "8d6", "damage_types": ["Fire"], "concentration": False})
+        self.assertEqual({k: sp[k] for k in ("name", "level", "save", "dice", "type", "attack", "ref")},
+                         {"name": "Fireball", "level": 3, "save": "dex", "dice": "8d6", "type": "fire", "attack": False, "ref": "spell:fireball"})
+
     def test_wrong_class_or_level_warns(self):
         self.assertTrue([w for w in rules.derive(char("wizard", 5, "champion-2024"))["warnings"] if "Fighter subclass" in w])
         self.assertTrue([w for w in rules.derive(char("fighter", 2, "champion-2024"))["warnings"] if "starts at" in w])

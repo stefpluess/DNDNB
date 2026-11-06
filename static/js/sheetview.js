@@ -22,6 +22,19 @@ function resourcesHtml(d) {
   return `<div class="blk"><h4>Resources ${hd}</h4>${rows}</div>`;
 }
 
+/** Spells that roll something: spell attack (works with combat targets), save DC, damage. */
+function spellsHtml(d, name, roll) {
+  const rows = (d.spells || []).filter(sp => sp.prepared || sp.level === 0);
+  if (!rows.length) return '';
+  return `<div class="blk"><h4>Spells <span class="hint">prepared and cantrips</span></h4>${rows.map(sp => `<div class="atk">
+      <div class="top-line"><span class="nm">${esc(sp.name)} <small class="hint">${sp.level ? `level ${sp.level}` : 'cantrip'}${sp.concentration ? ', conc.' : ''}</small></span>
+        ${sp.to_hit != null ? roll(`1d20${plusMinus(sp.to_hit)}`, 'atk', `${name} · ${sp.name} spell attack`, signed(sp.to_hit), 'btn roll', 'Spell attack',
+          attackAttrs(sp.name, [{ e: sp.damage, t: sp.type || '' }], { spell: true })) : ''}
+        ${sp.dc != null ? `<span class="mono" title="Save DC">${sp.save.toUpperCase()} DC ${sp.dc}</span>` : ''}
+        ${sp.damage ? roll(sp.damage, 'dmg', `${name} · ${sp.name} damage`, esc(`${sp.damage} ${sp.type || ''}`), 'btn roll', 'Shift-click for a critical hit') : ''}</div>
+      ${sp.note ? `<span class="sub">${esc(sp.note)}</span>` : ''}</div>`).join('')}</div>`;
+}
+
 /** Feature list items: gained ones in full, later ones dimmed; choices still to make are flagged. */
 const featureItems = list => list.map(f => `<li class="${f.gained ? '' : 'later'}"><b>${esc(f.name)}</b> <small class="hint">level ${f.level}</small>
       ${f.choice ? `<span class="tag-s">${esc(f.choice)}</span>` : ''}${f.needs_choice && f.gained ? '<span class="dis">choose on the sheet</span>' : ''}
@@ -96,6 +109,7 @@ export function derivedHtml(ch, { compact = false } = {}) {
       <ul class="features">${featureItems(d.origin_features)}</ul></details></div>` : ''}
     ${d.hp_per_level_bonus ? `<p class="hint">Remember: +${d.hp_per_level_bonus} HP per level (species, feats, subclass) belongs in the Max HP field.</p>` : ''}
     ${subclassHtml(d, compact)}
+    ${spellsHtml(d, name, roll)}
     <div class="blk"><h4>Attacks <span class="hint">shift-click damage for a crit</span></h4>${attacks}
       ${d.mastery_slots ? `<p class="hint">Weapon Mastery: ${(s.prof.mastery || []).length} of ${d.mastery_slots} known at level ${d.level} (tick them in the inventory).</p>` : ''}</div>
     <div class="blk"><h4>Saving throws</h4><div class="kv kv3">${saves}</div></div>

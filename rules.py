@@ -164,7 +164,7 @@ def blank_sheet(name="New character"):
         "styles": [], "spell_ability": None, "ac_misc": 0, "init_misc": 0,
         "slots": [{"max": 0, "used": 0} for _ in range(9)],
         "hit_dice_used": 0, "resources_used": {}, "subclass": "", "choices": {}, "inspiration": False,
-        "species": "", "background": "", "feats": [],
+        "species": "", "background": "", "feats": [], "spells": [],
         "inventory": [], "notes": "",
     }
 
@@ -374,6 +374,57 @@ def item_from_srd(kind, d):
         if belt and belt.group(1).lower() in GIANT_BELTS:
             item["mods"] = {"set": {"str": GIANT_BELTS[belt.group(1).lower()]}}
     return item
+
+
+# ---------- spells ----------
+
+LONG_TO_SHORT = {"strength": "str", "dexterity": "dex", "constitution": "con", "intelligence": "int", "wisdom": "wis", "charisma": "cha"}
+
+
+def spell_from_srd(d):
+    """A sheet spell from an Open5e (SRD 5.2) spell: what the sheet needs to roll it. All fields stay editable."""
+    save = (d.get("saving_throw_ability") or "").strip().lower()
+    types = d.get("damage_types") or []
+    return {"uid": new_uid(), "name": d["name"], "ref": f"spell:{short_key(d.get('key')) or d.get('index', '')}",
+            "level": int(d.get("level") or 0), "prepared": True, "attack": bool(d.get("attack_roll")),
+            "save": LONG_TO_SHORT.get(save, save[:3] if save else ""), "dice": d.get("damage_roll") or "",
+            "type": (types[0] if types else "").lower(), "concentration": bool(d.get("concentration")), "notes": ""}
+
+
+CANTRIP_SCALE = [(1, 1), (5, 2), (11, 3), (17, 4)]   # cantrip damage dice multiply at character levels 5, 11, 17
+
+
+def _scale_dice(dice, n):
+    """'1d10' x 2 -> '2d10'; the first dice group is multiplied ('1d8+3' -> '2d8+3')."""
+    return re.sub(r"(\d*)d(\d+)", lambda mm: f"{int(mm.group(1) or 1) * n}d{mm.group(2)}", dice, count=1) if dice else dice
+
+
+def spell_rows(sheet, spell, level, sub, m):
+    """The sheet's spells with what they roll: spell attack, save DC, damage (cantrips scaled by level;
+    Eldritch Blast as beams, with Agonizing Blast; Potent Spellcasting on cantrips)."""
+    rows = []
+    mult = _by_level(CANTRIP_SCALE, level, 1)
+    for sp in sheet.get("spells") or []:
+        lvl = int(sp.get("level") or 0)
+        dice = (sp.get("dice") or "").replace(" ", "")
+        bonus, note = 0, ""
+        name = sp.get("name") or "Spell"
+        if name.strip().lower() == "eldritch blast":
+            beams = mult
+            dice = dice or "1d10"
+            bonus = m[sub["eb_bonus"]] if sub["eb_bonus"] else 0
+            note = f"{beams} beam{'s' if beams > 1 else ''}: one attack roll each" + (" (Agonizing Blast)" if bonus else "")
+        elif lvl == 0 and dice:
+            dice = _scale_dice(dice, mult)
+            if sub["cantrip_bonus"]:
+                bonus = m[sub["cantrip_bonus"]]
+                note = "Potent Spellcasting"
+        if bonus and dice:
+            dice = f"{dice}{'+' if bonus >= 0 else '-'}{abs(bonus)}"
+        rows.append({**sp, "level": lvl, "damage": dice, "note": note,
+                     "to_hit": spell["attack"] if spell and sp.get("attack") else None,
+                     "dc": spell["dc"] if spell and sp.get("save") else None})
+    return sorted(rows, key=lambda r: (r["level"], r["name"]))
 
 
 # ---------- derived stats ----------
@@ -737,6 +788,7 @@ def derive(sheet):
                      "summon_info": [{"key": k, "name": summons.SUMMONS[k]["name"], "forms": summons.SUMMONS[k]["forms"]} for k in sub["summons"]]}
         if sub["key"] else None,
         "class_source": "Tasha's" if cls == "artificer" else "PHB 2024",
+        "spells": spell_rows(sheet, spell, level, sub, m),
         "defenses": sub["defenses"], "cdef": sub["cdef"], "ac_cond": sub["ac_cond"],
         "dex_save_adv": sub["dex_save_adv"], "auras": sub["auras"], "save_adv": sorted(set(sub["save_adv"])),
         "dr": [d for d in sub["dr"] if not d.get("heavy") or heavy],

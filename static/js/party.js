@@ -100,11 +100,33 @@ function subclassFields(s) {
   const O = S.meta.origins;
   const originChoices = [...(O.species.find(x => x.key === s.species)?.choices || []),
     ...O.feats.filter(f => featKeys(s).includes(f.key)).flatMap(f => f.choices)];
-  const choices = [...(S.meta.class_choices[cls] || []), ...(cur?.choices || []), ...originChoices].map(c => `<label class="lbl-f">${esc(c.feature)} <small class="hint">level ${c.level}</small>
+  const picked = f => { const v = (s.choices || {})[f]; return Array.isArray(v) ? v : v ? [v] : []; };
+  const choices = [...(S.meta.class_choices[cls] || []), ...(cur?.choices || []), ...originChoices].map(c => c.multi
+    // several picks (Eldritch Invocations): a checkbox list
+    ? `<details class="lbl-f multi"><summary>${esc(c.feature)} <small class="hint">${picked(c.feature).length} picked</small></summary><div class="checks">${c.options.map(o =>
+        `<label><input type="checkbox" data-list="choices.${esc(c.feature)}" value="${o.key}"${picked(c.feature).includes(o.key) ? ' checked' : ''}> ${esc(o.name)}</label>`).join('')}</div></details>`
+    : `<label class="lbl-f">${esc(c.feature)} <small class="hint">level ${c.level}</small>
       <select class="field" data-path="choices.${esc(c.feature)}" data-type="opt"><option value="">Choose…</option>${c.options.map(o =>
-        `<option value="${o.key}"${(s.choices || {})[c.feature] === o.key ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></label>`).join('');
+        `<option value="${o.key}"${picked(c.feature)[0] === o.key ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></label>`).join('');
   return `${originFields(s)}<label class="lbl-f">Subclass <select class="field" data-path="subclass" data-type="opt" id="f-subclass">
       <option value="">${list.length ? 'None yet' : cls ? 'No subclasses for this class' : 'Set a class first'}</option>${stale}${opts}</select></label>${choices}`;
+}
+
+/** The spell list: prepared box, name, level, attack or save, damage dice and type (filled in from the SRD). */
+function spellRows(s) {
+  if (!(s.spells || []).length) return '<p class="hint">No spells yet. Cantrip damage scales with level automatically; Eldritch Blast becomes beams.</p>';
+  const types = ['', ...S.meta.damage_types.map(t => t.toLowerCase())];
+  return `<table class="inv spells"><thead><tr><th title="Prepared">Prep.</th><th>Spell</th><th>Level</th><th>Attack</th><th>Save</th><th>Damage</th><th>Type</th><th></th></tr></thead><tbody>${s.spells.map((sp, i) => {
+    const p = `spells.${i}`;
+    return `<tr><td><input type="checkbox" data-path="${p}.prepared"${sp.prepared ? ' checked' : ''} aria-label="Prepared"></td>
+      <td><input class="field wide" data-path="${p}.name" data-required value="${esc(sp.name)}" aria-label="Spell name"></td>
+      <td><input class="field n" type="number" min="0" max="9" data-path="${p}.level" data-type="num" value="${sp.level ?? 0}" aria-label="Level (0 = cantrip)"></td>
+      <td><input type="checkbox" data-path="${p}.attack"${sp.attack ? ' checked' : ''} aria-label="Spell attack"></td>
+      <td><select class="field" data-path="${p}.save" aria-label="Save"><option value="">—</option>${S.meta.abilities.map(a => `<option value="${a}"${sp.save === a ? ' selected' : ''}>${a.toUpperCase()}</option>`).join('')}</select></td>
+      <td><input class="field n" data-path="${p}.dice" value="${esc(sp.dice || '')}" placeholder="8d6" aria-label="Damage dice"></td>
+      <td><select class="field" data-path="${p}.type" aria-label="Damage type">${types.map(t => `<option value="${t}"${(sp.type || '') === t ? ' selected' : ''}>${t || '—'}</option>`).join('')}</select></td>
+      <td><button class="link" data-rmspell="${i}" aria-label="Remove ${esc(sp.name)}">Remove</button></td></tr>`;
+  }).join('')}</tbody></table>`;
 }
 
 function renderSheet() {
@@ -156,6 +178,10 @@ function renderSheet() {
       <tbody>${inv || '<tr><td colspan="7" class="hint">Nothing carried yet. Search above to add gear; tick Eq. to wear or wield it.</td></tr>'}</tbody></table>
     <p class="hint">Equipped armor, shields and items count toward AC and bonuses. Attack bonuses are listed for every weapon carried.</p>
   </div>
+  <div class="sec"><h3>Spells <span class="line"><button class="link" data-sa="customspell">Add custom spell</button></span></h3>
+    <div class="itemsearch"><input class="field wide" type="search" id="spellSearch" placeholder="Search SRD spells to add" autocomplete="off"><ul class="results" id="spellResults" hidden></ul></div>
+    ${spellRows(s)}
+  </div>
   <div class="sec"><h3>Spell slots <button class="link" data-sa="slots">Use ${esc(s.class_name || 'class')} table</button></h3>
     <div class="slotedit">${s.slots.map((sl, i) => `<label>${ordinal(i + 1)}<input class="field" type="number" min="0" max="9" id="f-slot-${i}" data-path="slots.${i}.max" data-type="num" value="${sl.max}"></label>`).join('')}</div>
   </div>
@@ -174,6 +200,10 @@ async function onSheetAction(a, ch) {
     case 'slots':
       await charOp(ch.id, { apply_slots: true });
       return toast('Spell slots set from the class table.');
+    case 'customspell':
+      ch.sheet.spells = [...(ch.sheet.spells || []), { uid: uid(), name: 'New spell', level: 0, prepared: true, attack: false, save: '', dice: '', type: '', notes: '' }];
+      renderSheet();
+      return charOp(ch.id);
     case 'customitem':
       ch.sheet.inventory.push({ uid: uid(), name: 'Custom item', type: 'wondrous', equipped: true, bonus: 0, qty: 1, mods: {}, notes: '', attune: false, attuned: false });
       return charOp(ch.id);
@@ -249,6 +279,16 @@ export function initParty() {
   $('#sheet').addEventListener('click', async e => {
     const ch = current();
     if (!ch) return;
+    const rs = e.target.closest('[data-rmspell]');
+    if (rs) { ch.sheet.spells.splice(+rs.dataset.rmspell, 1); renderSheet(); return charOp(ch.id); }
+    const addSp = e.target.closest('[data-addspell]');
+    if (addSp) {
+      const sp = await api(`/api/item-template/spell/${addSp.dataset.addspell}`);
+      ch.sheet.spells = [...(ch.sheet.spells || []), sp];
+      renderSheet();
+      await charOp(ch.id);
+      return $('#spellSearch')?.focus();
+    }
     const rf = e.target.closest('[data-rmfeat]');
     if (rf) { ch.sheet.feats = (ch.sheet.feats || []).filter(k => k !== rf.dataset.rmfeat); renderSheet(); return charOp(ch.id); }
     const rm = e.target.closest('[data-rmitem]');
@@ -270,6 +310,19 @@ export function initParty() {
   });
 
   let itemTimer;
+  let spellTimer;
+  $('#sheet').addEventListener('input', e => {
+    if (e.target.id !== 'spellSearch') return;
+    clearTimeout(spellTimer);
+    spellTimer = setTimeout(async () => {
+      const q = e.target.value.trim(), ul = $('#spellResults');
+      if (!q) { ul.hidden = true; return; }
+      const rows = await api(`/api/search?kind=spell&q=${encodeURIComponent(q)}&limit=30`).catch(() => []);
+      ul.innerHTML = rows.map(r => `<li><button class="r-main" data-addspell="${r.idx}"><span class="r-name">${esc(r.name)}</span><span class="r-meta">${esc(r.meta)}</span></button></li>`).join('')
+        || `<li class="empty">${S.srdCounts.spell ? 'Nothing matches.' : 'No spell data: run python import_srd.py, or add a custom spell.'}</li>`;
+      ul.hidden = false;
+    }, 140);
+  });
   $('#sheet').addEventListener('input', e => {
     if (e.target.id !== 'itemSearch') return;
     clearTimeout(itemTimer);
@@ -283,8 +336,10 @@ export function initParty() {
     }, 140);
   });
   document.addEventListener('click', e => {
-    const ul = $('#itemResults');
-    if (ul && !e.target.closest('#sheet .itemsearch')) ul.hidden = true;
+    for (const id of ['#itemResults', '#spellResults']) {
+      const ul = $(id);
+      if (ul && !e.target.closest('#sheet .itemsearch')) ul.hidden = true;
+    }
   });
   $('#derived').addEventListener('click', e => {
     if (onResourceEvent(e, current())) return renderDerived();

@@ -147,7 +147,7 @@ add("peace-tce", S("cleric", "Peace Domain", TCE, [
       resource=("emboldening_bond", "Emboldening Bond", "pb", LR)),
     F(2, "Channel Divinity: Balm of Peace", "Action: move up to your speed without provoking Opportunity Attacks; each creature you pass within 5 ft regains 2d6 + Wis modifier HP."),
     F(6, "Protective Bond", "When a bonded creature is about to take damage, another bonded creature within 30 ft can use its Reaction to teleport next to it and take the damage instead."),
-    F(8, "Potent Spellcasting", "Add your Wis modifier to the damage of your Cleric cantrips."),
+    F(8, "Potent Spellcasting", "Add your Wis modifier to the damage of your Cleric cantrips.", cantrip_bonus="wis"),
     F(17, "Expansive Bond", "Bond benefits reach 60 ft, and a creature taking damage through Protective Bond has resistance to it."),
 ]))
 

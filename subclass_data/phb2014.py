@@ -58,7 +58,7 @@ add("knowledge-2014", S("cleric", "Knowledge Domain", P14, [
     F(1, "Blessings of Knowledge", "Two languages, and proficiency with double proficiency bonus (expertise) in two of Arcana, History, Nature or Religion."),
     F(2, "Channel Divinity: Knowledge of the Ages", "Action: proficiency with one skill or tool for 10 minutes."),
     F(6, "Channel Divinity: Read Thoughts", "Read a creature's surface thoughts within 60 ft (Wis save); you can then cast Suggestion on it without a slot."),
-    F(8, "Potent Spellcasting", "Add your Wis modifier to the damage of your Cleric cantrips."),
+    F(8, "Potent Spellcasting", "Add your Wis modifier to the damage of your Cleric cantrips.", cantrip_bonus="wis"),
     F(17, "Visions of the Past", "Meditate to see recent visions of an object or the area around you."),
 ], level=1))
 
@@ -83,7 +83,7 @@ add("light-2014", S("cleric", "Light Domain", P14, [
       resource=("warding_flare", "Warding Flare", "max(1, wis)", LR)),
     F(2, "Channel Divinity: Radiance of the Dawn", "Action: dispel magical darkness within 30 ft; hostile creatures there make a Con save or take 2d10 + Cleric level radiant (half on a success)."),
     F(6, "Improved Flare", "Warding Flare can also protect another creature."),
-    F(8, "Potent Spellcasting", "Add your Wis modifier to the damage of your Cleric cantrips."),
+    F(8, "Potent Spellcasting", "Add your Wis modifier to the damage of your Cleric cantrips.", cantrip_bonus="wis"),
     F(17, "Corona of Light", "Action: 1 minute of bright light (60 ft); enemies in it have Disadvantage on saves against fire and radiant spells."),
 ], level=1))
 

@@ -42,6 +42,9 @@ The catalog lives in subclass_data.py. A feature is F(level, name, summary, **ef
 Species, backgrounds and feats (subclass_data/origins.py) run through the same engine.
 Class features use the same keys; they live in subclass_data/classes.py.
   options=[(key, name, summary, {effects}), ...]  a choice the player makes; the chosen option's effects apply
+                                    (multi=True: several options can be picked, like Eldritch Invocations)
+  cantrip_bonus="wis"               add an ability modifier to cantrip damage (Potent Spellcasting)
+  eb_bonus="cha"                    add an ability modifier to each Eldritch Blast beam (Agonizing Blast)
 Formulas use: level, pb, half (level // 2), str, dex, con, int, wis, cha (modifiers), and max(...).
 Dice templates use the same names in braces: "1d6+{half}".
 """
@@ -90,7 +93,7 @@ def catalog():
     """Subclass choices for the sheet editor: [{key, class, name, source, choices: [{feature, name, options}]}]."""
     out = []
     for key, sc in SUBCLASSES.items():
-        choices = [{"feature": f["name"], "level": f["level"], "options": [{"key": k, "name": n} for k, n, *_ in f["options"]]}
+        choices = [{"feature": f["name"], "level": f["level"], "multi": bool(f.get("multi")), "options": [{"key": k, "name": n} for k, n, *_ in f["options"]]}
                    for f in sc["features"] if f.get("options")]
         new = SUPERSEDED.get(key)
         out.append({"key": key, "class": sc["class"], "name": sc["name"], "source": sc["source"], "choices": choices,
@@ -104,15 +107,17 @@ def _features(fs, level, choices, out_list, out, v):
     """Run a feature list: list each for display and collect the effects of those gained."""
     for f in fs:
         gained = level >= f["level"]
-        chosen = None
+        picked = []
         if f.get("options"):
             key = choices.get(f["name"])
-            chosen = next((o for o in f["options"] if o[0] == key), None)
+            keys = key if isinstance(key, list) else [key] if key else []
+            picked = [o for o in f["options"] if o[0] in keys][: None if f.get("multi") else 1]
         out_list.append({"level": f["level"], "name": f["name"], "text": f["text"], "gained": gained,
-                         "choice": chosen[1] if chosen else None, "choice_text": chosen[2] if chosen else None,
-                         "needs_choice": bool(f.get("options")) and not chosen})
+                         "choice": ", ".join(o[1] for o in picked) or None,
+                         "choice_text": " ".join(f"{o[1]}: {o[2]}" for o in picked) if f.get("multi") else (picked[0][2] if picked else None),
+                         "needs_choice": bool(f.get("options")) and not picked})
         if gained:
-            for eff in [f] + ([chosen[3]] if chosen and len(chosen) > 3 else []):
+            for eff in [f] + [o[3] for o in picked if len(o) > 3]:
                 _collect(out, eff, v, f["name"])
 
 
@@ -134,7 +139,7 @@ def effects(sheet, cls, level, pb, mods):
            "defenses": {"resist": [], "immune": [], "vuln": [], "condImmune": []}, "cdef": [], "ac_cond": [],
            "dex_save_adv": None, "auras": [], "heroic_warrior": False, "origin_features": [],
            "save_adv": [], "unarmed_die": None, "dr": [], "medium_dex_cap": None, "ignore_cover": False, "cheat_death": [],
-           "long_rest_inspiration": False}
+           "long_rest_inspiration": False, "cantrip_bonus": None, "eb_bonus": None}
     _features(CLASS_FEATURES.get(cls, []), level, choices, out["class_features"], out, v)
     out["class_spells"], out["spells"] = out["spells"], {}          # the class's always-prepared spells, shown apart
     # species, then the background's Origin feat and the chosen feats (character level gates species traits)
@@ -170,7 +175,7 @@ def feat_keys(sheet):
 
 def origin_catalog():
     """Species, backgrounds and feats for the sheet editor, with the choices each asks for."""
-    ch = lambda fs: [{"feature": f["name"], "level": f["level"], "options": [{"key": k, "name": n} for k, n, *_ in f["options"]]}
+    ch = lambda fs: [{"feature": f["name"], "level": f["level"], "multi": bool(f.get("multi")), "options": [{"key": k, "name": n} for k, n, *_ in f["options"]]}
                      for f in fs if f.get("options")]
     return {
         "species": [{"key": k, "name": n, "choices": ch(fs)} for k, (n, fs) in SPECIES.items()],
@@ -192,7 +197,7 @@ def score_boosts(cls, level):
 
 def class_catalog():
     """Class feature choices for the sheet editor: {class: [{feature, level, options: [{key, name}]}]}."""
-    return {cls: [{"feature": f["name"], "level": f["level"], "options": [{"key": k, "name": n} for k, n, *_ in f["options"]]}
+    return {cls: [{"feature": f["name"], "level": f["level"], "multi": bool(f.get("multi")), "options": [{"key": k, "name": n} for k, n, *_ in f["options"]]}
                   for f in fs if f.get("options")] for cls, fs in CLASS_FEATURES.items()}
 
 
@@ -208,6 +213,10 @@ def _collect(out, e, v, feature):
         b = e["ac_bonus"]
         out["ac_cond"].append({"needs": b["needs"], "ac": max(b.get("min", -99), v[b["add"]]) if b.get("add") else b["ac"], "from": feature})
     out["save_adv"] += e.get("save_adv", [])
+    if "cantrip_bonus" in e:
+        out["cantrip_bonus"] = e["cantrip_bonus"]
+    if "eb_bonus" in e:
+        out["eb_bonus"] = e["eb_bonus"]
     if "unarmed_die" in e:
         out["unarmed_die"] = e["unarmed_die"]
     if "dr" in e:

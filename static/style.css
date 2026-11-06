@@ -145,6 +145,8 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .atkhint{color:var(--warn);margin:2px 0}
 .resline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0}
 .resline>span:first-child{min-width:10rem;font-weight:600;font-size:.9rem}
+.multi summary{cursor:pointer;font-weight:600}
+.multi .checks{max-height:14rem;overflow:auto;padding:4px 0}
 .features{list-style:none;padding:0;margin:0;display:grid;gap:6px}
 .features li{font-size:.88rem}
 .features li.later{opacity:.5}

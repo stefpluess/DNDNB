@@ -81,6 +81,8 @@ def entry(_req, _q, kind, idx):
 
 
 def item_template(req, q, kind, idx):
+    if kind == "spell":
+        return rules.spell_from_srd(entry(req, q, kind, idx))
     return rules.item_from_srd(kind, entry(req, q, kind, idx))
 
 
