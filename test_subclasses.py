@@ -175,6 +175,55 @@ class OnTheSheet(unittest.TestCase):
         cat = {c["key"]: c for c in subclasses.catalog()}
         self.assertEqual((cat["wildfire-tce"]["superseded_by"], cat["fey-wanderer-tce"]["superseded_by"]), (None, "fey-wanderer-2024"))
 
+    def test_class_features_every_class_every_level(self):
+        from subclass_data.classes import CLASS_FEATURES
+        self.assertEqual(set(CLASS_FEATURES), set(rules.CLASS_DEFAULTS))
+        for cls in CLASS_FEATURES:
+            for level in range(1, 21):
+                d = rules.derive(char(cls, level))
+                self.assertTrue(all(f["level"] <= 20 for f in d["class_features"]))
+
+    def test_aura_of_protection_and_radiant_strikes(self):
+        p = char("paladin", 11, str=16, cha=16)
+        p["inventory"] = [{"uid": "l", "name": "Longsword", "type": "weapon", "equipped": True,
+                           "weapon": {"index": "longsword", "category": "Martial", "range": "Melee", "dice": "1d8", "dtype": "slashing", "properties": []}}]
+        d = rules.derive(p)
+        self.assertEqual(d["saves"]["wis"]["bonus"], 0 + 4 + 3)          # proficient (PB 4) + aura (Cha +3)
+        self.assertEqual(d["saves"]["str"]["bonus"], 3 + 3)
+        self.assertEqual(d["attacks"][0]["riders"][0]["name"], "Radiant Strikes")
+        self.assertEqual(rules.derive(char("paladin", 5, cha=16))["saves"]["str"]["bonus"], 0)   # aura from 6
+
+    def test_divine_order_and_blessed_strikes(self):
+        c = char("cleric", 7, wis=16)
+        self.assertTrue([w for w in rules.derive({**c, "inventory": [{"uid": "p", "name": "Plate", "type": "armor", "equipped": True,
+                                                                      "armor": {"category": "Heavy", "base": 18, "str_min": 0}}]})["warnings"] if "Not proficient" in w])
+        c["choices"] = {"Divine Order": "protector", "Blessed Strikes": "divine"}
+        d = rules.derive({**c, "inventory": [{"uid": "p", "name": "Plate", "type": "armor", "equipped": True,
+                                             "armor": {"category": "Heavy", "base": 18, "str_min": 0}}]})
+        self.assertFalse([w for w in d["warnings"] if "Not proficient" in w])
+        self.assertEqual(next(a for a in d["attacks"] if a["name"] == "Unarmed Strike").get("riders"), None)   # weapons only
+        c["choices"] = {"Divine Order": "thaumaturge"}
+        d = rules.derive(c)
+        self.assertEqual((d["skills"]["religion"]["bonus"], d["skills"]["history"]["bonus"]), (3, 0))
+
+    def test_save_proficiencies_scores_speed_and_foe_slayer(self):
+        self.assertTrue(all(v["proficient"] for v in rules.derive(char("monk", 14))["saves"].values()))
+        self.assertEqual([a for a, v in rules.derive(char("rogue", 15))["saves"].items() if v["proficient"]], ["dex", "int", "wis", "cha"])
+        b = rules.derive(char("barbarian", 20, str=20, con=18))
+        self.assertEqual((b["scores"]["str"], b["scores"]["con"]), (24, 22))
+        self.assertEqual(rules.derive(char("barbarian", 20, str=24))["scores"]["str"], 25)       # cap 25
+        self.assertEqual(rules.derive(char("ranger", 6))["speed"], 40)
+        self.assertEqual((rules.derive(char("ranger", 19))["hunters_mark_die"], rules.derive(char("ranger", 20))["hunters_mark_die"]), (None, "1d10"))
+        self.assertIn("Hunter's Mark", rules.derive(char("ranger", 1))["class_spells"][1])
+
+    def test_pact_of_the_blade_uses_charisma(self):
+        w = char("warlock", 5, str=8, cha=18)
+        w["inventory"] = [{"uid": "g", "name": "Glaive", "type": "weapon", "equipped": True,
+                           "weapon": {"index": "glaive", "category": "Martial", "range": "Melee", "dice": "1d10", "dtype": "slashing", "properties": []}}]
+        self.assertEqual(rules.derive(w)["attacks"][0]["ability"], "str")
+        w["choices"] = {"Eldritch Invocations": "blade"}
+        self.assertEqual(rules.derive(w)["attacks"][0]["ability"], "cha")
+
     def test_wrong_class_or_level_warns(self):
         self.assertTrue([w for w in rules.derive(char("wizard", 5, "champion-2024"))["warnings"] if "Fighter subclass" in w])
         self.assertTrue([w for w in rules.derive(char("fighter", 2, "champion-2024"))["warnings"] if "starts at" in w])

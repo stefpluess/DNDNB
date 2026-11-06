@@ -98,6 +98,12 @@ Front end, `static/js/` (plain ES modules, no framework):
   Summaries are in our own words, never the books' text. Summoned creatures (Wildfire Spirit, Steel
   Defender, Eldritch Cannon, Primal Companion) are built by `summons.py` as monster-shaped stat blocks.
   `test_subclasses.py` evaluates every catalog entry at several levels.
+- Class features: every 2024 class (and the Tasha's Artificer) level 1–20 in `subclass_data/classes.py`,
+  through the same engine: Divine Order, Primal Order, Blessed Strikes, Elemental Fury, Pact of the Blade
+  choices; Aura of Protection, Radiant Strikes, Brutal Strike, Disciplined Survivor, Slippery Mind, Roving,
+  Indomitable, Primal Champion / Body and Mind (scores to 25), Foe Slayer.
+- Spell effects in combat (`SPELL_EFFECTS` in combat.js): Hunter's Mark, Hex (marks add damage to the
+  caster's hits and can be moved), Bless, Bane, Shield of Faith, Haste, Shield, Divine Favor.
 - Artificer (Tasha's) is supported as a class.
 - Not modeled: multiclassing, feats, subclasses from other books.
 

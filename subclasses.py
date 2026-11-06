@@ -20,6 +20,13 @@ The catalog lives in subclass_data.py. A feature is F(level, name, summary, **ef
   spells={level: [names]}           spells always prepared from that class level
   summon="key"                      can summon a creature (see summons in rules.py)
   third_caster="int"                one-third caster (Eldritch Knight, Arcane Trickster): slots and casting ability
+  saves=["wis", "cha"]              extra saving throw proficiencies
+  save_bonus="cha"                  add an ability modifier (minimum +1) to every saving throw (Aura of Protection)
+  scores={"str": 4}, score_max=25   ability score increases with a higher cap (class features only)
+  mark_die="1d10"                   Hunter's Mark's damage die (Foe Slayer)
+  melee_ability="cha"               melee weapons may use this ability (Pact of the Blade)
+  check=dict(skills=[...], ...)     a check bonus limited to some skills
+Class features use the same keys; they live in subclass_data/classes.py.
   options=[(key, name, summary, {effects}), ...]  a choice the player makes; the chosen option's effects apply
 Formulas use: level, pb, half (level // 2), str, dex, con, int, wis, cha (modifiers), and max(...).
 Dice templates use the same names in braces: "1d6+{half}".
@@ -29,6 +36,7 @@ import re
 
 from subclass_data import CATALOG as SUBCLASSES  # the data, written with F() and S() from that module
 from subclass_data import SUPERSEDED
+from subclass_data.classes import CLASS_FEATURES
 
 
 # ---------- evaluating formulas ----------
@@ -75,24 +83,45 @@ def catalog():
     return sorted(out, key=lambda s: (s["class"], s["name"], s["source"]))
 
 
-# ---------- a character's subclass ----------
+# ---------- a character's class and subclass ----------
+
+def _features(fs, level, choices, out_list, out, v):
+    """Run a feature list: list each for display and collect the effects of those gained."""
+    for f in fs:
+        gained = level >= f["level"]
+        chosen = None
+        if f.get("options"):
+            key = choices.get(f["name"])
+            chosen = next((o for o in f["options"] if o[0] == key), None)
+        out_list.append({"level": f["level"], "name": f["name"], "text": f["text"], "gained": gained,
+                         "choice": chosen[1] if chosen else None, "choice_text": chosen[2] if chosen else None,
+                         "needs_choice": bool(f.get("options")) and not chosen})
+        if gained:
+            for eff in [f] + ([chosen[3]] if chosen and len(chosen) > 3 else []):
+                _collect(out, eff, v, f["name"])
+
 
 def effects(sheet, cls, level, pb, mods):
-    """What the character's subclass gives at its level.
+    """What the character's class features and subclass give at its level.
 
-    Returns None without a (known) subclass, else a dict with the features list for display and the
-    collected effects: armor, weapons, ac_unarmored, crit, resources, riders, checks, init, speed,
-    attacks, magic_weapon_ability, hp_per_level, spells, summons, warnings.
+    Always returns a dict: `key`, `name`, `source` describe the subclass (None without one), `features`
+    are the subclass's features and `class_features` the class's, for display; the rest are the collected
+    effects: armor, weapons, ac_unarmored, crit, resources, riders, checks, init, speed_rules, attacks,
+    magic_weapon_ability, melee_ability, hp_per_level, spells, summons, third_caster, saves, save_bonus,
+    scores, mark_die, warnings.
     """
-    sc = SUBCLASSES.get(sheet.get("subclass") or "")
-    if not sc:
-        return None
     v = values(level, pb, mods)
     choices = sheet.get("choices") or {}
-    out = {"key": sheet["subclass"], "name": sc["name"], "source": sc["source"], "features": [], "warnings": [],
+    out = {"key": None, "name": None, "source": None, "features": [], "class_features": [], "warnings": [],
            "armor": [], "weapons": [], "ac_unarmored": [], "crit": 20, "resources": [], "riders": [], "checks": [],
-           "init": 0, "speed": 0, "attacks": [], "magic_weapon_ability": None, "hp_per_level": 0, "spells": {}, "summons": [],
-           "third_caster": None}
+           "init": 0, "attacks": [], "magic_weapon_ability": None, "melee_ability": None, "hp_per_level": 0,
+           "spells": {}, "summons": [], "third_caster": None, "saves": [], "save_bonus": [], "scores": {}, "mark_die": None}
+    _features(CLASS_FEATURES.get(cls, []), level, choices, out["class_features"], out, v)
+    out["class_spells"], out["spells"] = out["spells"], {}          # the class's always-prepared spells, shown apart
+    sc = SUBCLASSES.get(sheet.get("subclass") or "")
+    if not sc:
+        return out
+    out.update(key=sheet["subclass"], name=sc["name"], source=sc["source"])
     if sc["class"] != cls:
         out["warnings"].append(f"{sc['name']} is a {sc['class'].title()} subclass, but the class is {cls.title() or 'not set'}.")
         return out
@@ -102,25 +131,37 @@ def effects(sheet, cls, level, pb, mods):
         out["warnings"].append(f"Older version: {sc['name']} ({sc['source']}) has a 2024 version, {n['name']} ({n['source']}).")
     if level < sc["level"]:
         out["warnings"].append(f"{sc['name']} starts at {sc['class'].title()} level {sc['level']}.")
-    for f in sc["features"]:
-        gained = level >= f["level"]
-        chosen = None
-        if f.get("options"):
-            key = choices.get(f["name"])
-            chosen = next((o for o in f["options"] if o[0] == key), None)
-        out["features"].append({"level": f["level"], "name": f["name"], "text": f["text"], "gained": gained,
-                                "choice": chosen[1] if chosen else None, "choice_text": chosen[2] if chosen else None,
-                                "needs_choice": bool(f.get("options")) and not chosen})
-        if not gained:
-            continue
-        for eff in [f] + ([chosen[3]] if chosen and len(chosen) > 3 else []):
-            _collect(out, eff, v, f["name"])
+    _features(sc["features"], level, choices, out["features"], out, v)
     return out
+
+
+def score_boosts(cls, level):
+    """Ability score increases from class features (Primal Champion, Body and Mind): ({ability: n}, cap)."""
+    boosts, cap = {}, 20
+    for f in CLASS_FEATURES.get(cls, []):
+        if level >= f["level"] and f.get("scores"):
+            for a, n in f["scores"].items():
+                boosts[a] = boosts.get(a, 0) + n
+            cap = max(cap, f.get("score_max", 20))
+    return boosts, cap
+
+
+def class_catalog():
+    """Class feature choices for the sheet editor: {class: [{feature, level, options: [{key, name}]}]}."""
+    return {cls: [{"feature": f["name"], "level": f["level"], "options": [{"key": k, "name": n} for k, n, *_ in f["options"]]}
+                  for f in fs if f.get("options")] for cls, fs in CLASS_FEATURES.items()}
 
 
 def _collect(out, e, v, feature):
     out["armor"] += e.get("armor", [])
     out["weapons"] += e.get("weapons", [])
+    out["saves"] += e.get("saves", [])
+    if "save_bonus" in e:
+        out["save_bonus"].append({"from": feature, "add": e["save_bonus"], "min": e.get("save_min", 1)})
+    if "mark_die" in e:
+        out["mark_die"] = e["mark_die"]
+    if "melee_ability" in e:
+        out["melee_ability"] = e["melee_ability"]
     if "ac_unarmored" in e:
         base, abil = e["ac_unarmored"]
         out["ac_unarmored"].append({"name": feature, "base": base, "abilities": abil, "no_shield": e.get("no_shield", False)})

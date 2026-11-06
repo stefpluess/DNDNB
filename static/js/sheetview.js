@@ -22,13 +22,25 @@ function resourcesHtml(d) {
   return `<div class="blk"><h4>Resources ${hd}</h4>${rows}</div>`;
 }
 
-/** The subclass's features by level: gained ones in full, later ones dimmed; choices still to make are flagged. */
+/** Feature list items: gained ones in full, later ones dimmed; choices still to make are flagged. */
+const featureItems = list => list.map(f => `<li class="${f.gained ? '' : 'later'}"><b>${esc(f.name)}</b> <small class="hint">level ${f.level}</small>
+      ${f.choice ? `<span class="tag-s">${esc(f.choice)}</span>` : ''}${f.needs_choice && f.gained ? '<span class="dis">choose on the sheet</span>' : ''}
+      <span class="ftext">${esc(f.choice_text || f.text)}</span></li>`).join('');
+const spellLine = spells => Object.entries(spells || {}).map(([lv, names]) => `${lv}: ${names.map(esc).join(', ')}`).join(' · ');
+
+/** The class's own features by level (with choices like Divine Order). */
+function classFeaturesHtml(d, compact) {
+  if (!d.class_features?.length) return '';
+  const spells = spellLine(d.class_spells);
+  const body = `<ul class="features">${featureItems(d.class_features)}</ul>${spells ? `<p class="hint"><b>Always prepared</b> ${spells}</p>` : ''}`;
+  return `<div class="blk"><h4>Class features <span class="hint">${esc(d.class_source)}</span></h4><details${compact ? '' : ' open'}><summary class="hint">Level 1–20</summary>${body}</details></div>`;
+}
+
+/** The subclass's features by level. */
 function subclassHtml(d, compact) {
   const sc = d.subclass;
   if (!sc) return '';
-  const feats = sc.features.map(f => `<li class="${f.gained ? '' : 'later'}"><b>${esc(f.name)}</b> <small class="hint">level ${f.level}</small>
-      ${f.choice ? `<span class="tag-s">${esc(f.choice)}</span>` : ''}${f.needs_choice && f.gained ? '<span class="dis">choose on the sheet</span>' : ''}
-      <span class="ftext">${esc(f.choice_text || f.text)}</span></li>`).join('');
+  const feats = featureItems(sc.features);
   const spells = Object.entries(sc.spells || {}).map(([lv, names]) => `${lv}: ${names.map(esc).join(', ')}`).join(' · ');
   const body = `<ul class="features">${feats}</ul>
     ${spells ? `<p class="hint"><b>Always prepared</b> (by class level) ${spells}</p>` : ''}
@@ -79,6 +91,7 @@ export function derivedHtml(ch, { compact = false } = {}) {
     ${d.rage_damage || d.sneak_attack ? `<div class="tiles">${d.rage_damage ? `<div class="tile"><b>+${d.rage_damage}</b><small>RAGE DAMAGE</small></div>` : ''}${d.sneak_attack
       ? `<div class="tile">${roll(d.sneak_attack, 'dmg', `${name} · Sneak Attack`, `<b>${d.sneak_attack}</b>`, 'link', 'Once per turn: Finesse or Ranged weapon with Advantage, or an ally next to the target. Shift-click for a crit')}<small>SNEAK ATTACK</small></div>` : ''}</div>` : ''}
     ${resourcesHtml(d)}
+    ${classFeaturesHtml(d, compact)}
     ${subclassHtml(d, compact)}
     <div class="blk"><h4>Attacks <span class="hint">shift-click damage for a crit</span></h4>${attacks}
       ${d.mastery_slots ? `<p class="hint">Weapon Mastery: ${(s.prof.mastery || []).length} of ${d.mastery_slots} known at level ${d.level} (tick them in the inventory).</p>` : ''}</div>

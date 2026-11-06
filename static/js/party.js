@@ -68,7 +68,7 @@ function subclassFields(s) {
   const opts = `<optgroup label="Current">${current.map(opt).join('')}</optgroup>`
     + (older.length ? `<optgroup label="Older versions (replaced in 2024)">${older.map(opt).join('')}</optgroup>` : '');
   const stale = cur && cur.class !== cls ? `<option value="${cur.key}" selected>${esc(cur.name)} (${esc(cur.source)}, not ${esc(s.class_name || 'this class')})</option>` : '';
-  const choices = (cur?.choices || []).map(c => `<label class="lbl-f">${esc(c.feature)} <small class="hint">level ${c.level}</small>
+  const choices = [...(S.meta.class_choices[cls] || []), ...(cur?.choices || [])].map(c => `<label class="lbl-f">${esc(c.feature)} <small class="hint">level ${c.level}</small>
       <select class="field" data-path="choices.${esc(c.feature)}" data-type="opt"><option value="">Choose…</option>${c.options.map(o =>
         `<option value="${o.key}"${(s.choices || {})[c.feature] === o.key ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></label>`).join('');
   return `<label class="lbl-f">Subclass <select class="field" data-path="subclass" data-type="opt" id="f-subclass">

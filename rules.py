@@ -425,6 +425,10 @@ def derive(sheet):
     # ability scores, with "set to N" items (they only raise a score)
     scores = {a: int(sheet["abilities"].get(a, 10)) for a in ABILITIES}
     score_notes = {}
+    boosts, cap = subclasses.score_boosts(cls, level)   # Primal Champion, Body and Mind
+    for a, n in boosts.items():
+        scores[a] = min(cap, scores[a] + n)
+        score_notes[a] = "class feature"
     for item in active:
         for a, v in ((item.get("mods") or {}).get("set") or {}).items():
             if a in scores and int(v) > scores[a]:
@@ -432,12 +436,13 @@ def derive(sheet):
                 score_notes[a] = item["name"]
     m = {a: mod(s) for a, s in scores.items()}
 
-    # subclass: its effects join the class's (training is added here, never written into the sheet)
+    # class features and subclass: their effects join the sheet's (training is added here, never written
+    # into the sheet)
     sub = subclasses.effects(sheet, cls, level, pb, m)
-    if sub:
-        warnings += sub["warnings"]
-        prof = {**prof, "armor": sorted(set(prof["armor"]) | set(sub["armor"])),
-                "weapons": sorted(set(prof["weapons"]) | set(sub["weapons"]))}
+    warnings += sub["warnings"]
+    prof = {**prof, "armor": sorted(set(prof["armor"]) | set(sub["armor"])),
+            "weapons": sorted(set(prof["weapons"]) | set(sub["weapons"])),
+            "saves": sorted(set(prof["saves"]) | set(sub["saves"]))}
 
     # armor class
     armor = next((i for i in active if i.get("type") == "armor"), None)
@@ -488,7 +493,7 @@ def derive(sheet):
     ac = sum(v for _, v in ac_parts)
 
     # saves
-    save_bonus = _mod_total(active, "saves")
+    save_bonus = _mod_total(active, "saves") + sum(max(b["min"], m[b["add"]]) for b in sub["save_bonus"])
     saves = {}
     for a in ABILITIES:
         p = a in prof["saves"]
@@ -505,7 +510,8 @@ def derive(sheet):
         if jack and not p:
             skills[s]["jack"] = True
         for chk in (sub or {}).get("checks", []):
-            if a in chk["abilities"] and not (chk.get("unproficient") and p):
+            applies = s in chk["skills"] if chk.get("skills") else a in chk.get("abilities", [])
+            if applies and not (chk.get("unproficient") and p):
                 extra = _check_extra(chk, m, pb)
                 if extra and not (jack and not p and chk["add"].startswith("half_pb")):
                     skills[s]["bonus"] += extra
@@ -559,6 +565,9 @@ def derive(sheet):
         mwa = (sub or {}).get("magic_weapon_ability")    # e.g. Battle Smith: Int with magic weapons
         if mwa and magic and m[mwa] > m[ab]:
             ab = mwa
+        mla = (sub or {}).get("melee_ability")           # e.g. Pact of the Blade: Cha with the pact weapon
+        if mla and not ranged and m[mla] > m[ab]:
+            ab = mla
         proficient = _proficient_weapon(w, item["name"], prof["weapons"])
         hit_parts = [(ABILITY_NAMES[ab], m[ab])]
         if proficient:
@@ -634,7 +643,7 @@ def derive(sheet):
             ma_die = uf_die
     ua_hit = [(ABILITY_NAMES[ua], m[ua]), ("Proficiency", pb)] + ([("Exhaustion", -pen)] if pen else [])
     attacks.append({
-        "uid": "unarmed", "name": "Unarmed Strike", "equipped": True, "ability": ua, "proficient": True,
+        "uid": "unarmed", "name": "Unarmed Strike", "equipped": True, "ability": ua, "proficient": True, "ranged": False,
         "to_hit": sum(v for _, v in ua_hit), "hit_parts": ua_hit,
         "damage_dice": ma_die, "damage_bonus": m[ua] + (0 if ma_die else 1), "damage_type": "bludgeoning",
         "damage": (f"{ma_die}{signed(m[ua]) if m[ua] else ''} bludgeoning" if ma_die
@@ -686,7 +695,7 @@ def derive(sheet):
     # initiative: a Dexterity check, so Dex-check bonuses from the subclass count
     init = m["dex"] + int(sheet.get("init_misc") or 0) - pen + (sub or {}).get("init", 0)
     for chk in (sub or {}).get("checks", []):
-        if "dex" in chk["abilities"]:
+        if not chk.get("skills") and "dex" in chk.get("abilities", []):
             init += _check_extra(chk, m, pb)
 
     attuned = sum(1 for i in sheet["inventory"] if i.get("attune") and i.get("attuned"))
@@ -711,7 +720,9 @@ def derive(sheet):
         "crit_range": crit,
         "subclass": {**{k: sub[k] for k in ("key", "name", "source", "features", "spells", "summons", "hp_per_level")},
                      "summon_info": [{"key": k, "name": summons.SUMMONS[k]["name"], "forms": summons.SUMMONS[k]["forms"]} for k in sub["summons"]]}
-        if sub else None,
+        if sub["key"] else None,
+        "class_source": "Tasha's" if cls == "artificer" else "PHB 2024",
+        "class_features": sub["class_features"], "class_spells": sub["class_spells"], "hunters_mark_die": sub["mark_die"],
         "rage_damage": rage, "sneak_attack": sneak,
         "smite": cls == "paladin" and level >= 2,
         "hit_die": (CLASS_DEFAULTS.get(cls) or (None,) * 5)[4],
