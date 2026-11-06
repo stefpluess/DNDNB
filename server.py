@@ -337,7 +337,7 @@ def _wiki(fn, *args, **kw):
 
 
 def _page_fields(body):
-    return {k: body[k] for k in ("title", "category", "body", "portrait") if k in body}
+    return {k: body[k] for k in ("title", "category", "body", "portrait", "fields", "tags", "parent_id") if k in body}
 
 
 def list_wiki(_req, _q):

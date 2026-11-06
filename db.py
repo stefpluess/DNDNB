@@ -52,7 +52,10 @@ CREATE TABLE IF NOT EXISTS wiki_pages (
     created  TEXT DEFAULT CURRENT_TIMESTAMP,
     updated  TEXT DEFAULT CURRENT_TIMESTAMP,
     deleted  TEXT,                       -- set when moved to the trash; NULL otherwise
-    portrait TEXT                        -- an image file shown at the top of the page's info box
+    portrait TEXT,                       -- an image file shown at the top of the page's info box
+    fields   TEXT,                       -- info box values per category: {"npc": {"location": "Phandalin"}}
+    tags     TEXT,                       -- ["act-2", "dungeon"]
+    parent_id INTEGER                    -- the page it sits inside (a tavern inside a town); NULL at the top
 );
 CREATE TABLE IF NOT EXISTS wiki_images (
     file    TEXT PRIMARY KEY,   -- '<16 hex of the content's SHA-256>.<png|jpg|gif|webp>' in data/wiki_images/
@@ -84,7 +87,8 @@ def srd():
 
 # Columns added after a table first shipped: CREATE TABLE IF NOT EXISTS won't add them to an existing
 # database, so they're added here (never dropped or changed).
-CAMPAIGN_COLUMNS = [("wiki_pages", "portrait", "TEXT")]
+CAMPAIGN_COLUMNS = [("wiki_pages", "portrait", "TEXT"), ("wiki_pages", "fields", "TEXT"), ("wiki_pages", "tags", "TEXT"),
+                    ("wiki_pages", "parent_id", "INTEGER")]
 
 
 def add_missing_columns(conn, columns):

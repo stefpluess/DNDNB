@@ -35,7 +35,9 @@ class Links(unittest.TestCase):
         self.assertEqual(wiki.clean_title("  Old   Mill "), "Old Mill")
 
 
-class Pages(unittest.TestCase):
+class TempWiki(unittest.TestCase):
+    """A fresh campaign database for each test."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.saved = (db.DATA_DIR, db.SRD_DB, db.CAMPAIGN_DB)
@@ -51,6 +53,8 @@ class Pages(unittest.TestCase):
     def page(self, title, body="", category="npc"):
         return wiki.create_page(self.conn, title, category, body)
 
+
+class Pages(TempWiki):
     def test_new_pages_get_free_titles_and_unknown_categories_are_unsorted(self):
         a = wiki.create_page(self.conn)
         b = wiki.create_page(self.conn, category="nonsense")
@@ -125,11 +129,68 @@ class Pages(unittest.TestCase):
         self.assertEqual(cm.exception.status, 404)
 
 
+class InfoTagsNesting(TempWiki):
+    def test_fields_are_cleaned_and_kept_per_category(self):
+        page = self.page("Durnan")
+        out = wiki.update_page(self.conn, page["id"], fields={
+            "npc": {"species": "  Human ", "location": "[[The Yawning Portal]]", "attitude": "Smitten", "status": "Alive", "bogus": "x"},
+            "quest": {"status": "Active"}, "nonsense": {"a": "b"}})
+        self.assertEqual(out["fields"], {"npc": {"species": "Human", "location": "The Yawning Portal", "status": "Alive"},
+                                         "quest": {"status": "Active"}})
+        # switching category keeps the NPC values for when it switches back
+        self.assertEqual(wiki.update_page(self.conn, page["id"], category="location")["fields"]["npc"]["species"], "Human")
+        self.assertEqual(wiki.clean_fields({"session": {"played": "2026-11-06"}}), {"session": {"played": "2026-11-06"}})
+        self.assertEqual(wiki.clean_fields({"session": {"played": "last friday"}}), {})
+
+    def test_page_fields_are_links_and_follow_renames(self):
+        portal = self.page("The Yawning Portal", "", "location")
+        durnan = wiki.create_page(self.conn, "Durnan", "npc", "", fields={"npc": {"location": "the yawning portal", "faction": "Zhentarim"}})
+        self.assertEqual(durnan["fields"]["npc"]["location"], "The Yawning Portal")       # the page's exact title
+        self.assertEqual([(l["text"], l["id"]) for l in durnan["links"]], [("The Yawning Portal", portal["id"]), ("Zhentarim", None)])
+        self.assertEqual([b["title"] for b in wiki.get_page(self.conn, portal["id"])["backlinks"]], ["Durnan"])
+        out = wiki.update_page(self.conn, portal["id"], title="Yawning Portal Inn")
+        self.assertEqual(out["relinked"], 1)
+        self.assertEqual(wiki.get_page(self.conn, durnan["id"])["fields"]["npc"]["location"], "Yawning Portal Inn")
+        # a page field of another category isn't a link
+        wiki.update_page(self.conn, durnan["id"], category="lore")
+        self.assertEqual(wiki.get_page(self.conn, portal["id"])["backlinks"], [])
+
+    def test_tags_are_normalized_counted_and_searchable(self):
+        self.assertEqual(wiki.clean_tags("Act 2, #Dungeon, dungeon, , weird!tag"), ["act-2", "dungeon", "weirdtag"])
+        a = wiki.create_page(self.conn, "Cragmaw Hideout", "location", "Goblin cave.", tags="Act 1, dungeon")
+        wiki.create_page(self.conn, "Wave Echo Cave", "location", "", tags=["dungeon"])
+        self.assertEqual(a["tags"], ["act-1", "dungeon"])
+        self.assertEqual(wiki.list_pages(self.conn)["tags"], [{"tag": "act-1", "n": 1}, {"tag": "dungeon", "n": 2}])
+        self.assertEqual([h["title"] for h in wiki.search(self.conn, "#dungeon")], ["Cragmaw Hideout", "Wave Echo Cave"])
+        self.assertEqual([h["title"] for h in wiki.search(self.conn, "#act-1 goblin")], ["Cragmaw Hideout"])
+        self.assertEqual(wiki.search(self.conn, "#act"), [])                 # a #tag must match whole
+
+    def test_pages_inside_pages(self):
+        coast = self.page("Sword Coast", "", "location")
+        town = wiki.create_page(self.conn, "Phandalin", "location", parent_id=coast["id"])
+        inn = wiki.create_page(self.conn, "Stonehill Inn", "location", parent_id=town["id"])
+        self.assertEqual([b["title"] for b in wiki.get_page(self.conn, inn["id"])["breadcrumbs"]], ["Sword Coast", "Phandalin"])
+        self.assertEqual([c["title"] for c in wiki.get_page(self.conn, town["id"])["children"]], ["Stonehill Inn"])
+        with self.assertRaises(wiki.WikiError):                               # a loop
+            wiki.update_page(self.conn, coast["id"], parent_id=inn["id"])
+        with self.assertRaises(wiki.WikiError):                               # inside itself
+            wiki.update_page(self.conn, town["id"], parent_id=town["id"])
+        self.assertEqual(wiki.update_page(self.conn, inn["id"], body="x")["parent_id"], town["id"])   # kept
+        # its parent in the trash: listed at the top level, back in place once restored
+        wiki.trash_page(self.conn, town["id"])
+        listed = {p["title"]: p["parent_id"] for p in wiki.list_pages(self.conn)["pages"]}
+        self.assertIsNone(listed["Stonehill Inn"])
+        self.assertEqual(wiki.get_page(self.conn, inn["id"])["breadcrumbs"], [])
+        wiki.restore_page(self.conn, town["id"])
+        self.assertEqual(wiki.get_page(self.conn, inn["id"])["parent_id"], town["id"])
+        self.assertIsNone(wiki.update_page(self.conn, inn["id"], parent_id=None)["parent_id"])
+
+
 PNG = b"\x89PNG\r\n\x1a\n" + b"pretend pixels"
 JPG = b"\xff\xd8\xff\xe0" + b"pretend pixels"
 
 
-class Images(Pages):
+class Images(TempWiki):
     def folder(self):
         return db.wiki_images_dir()
 

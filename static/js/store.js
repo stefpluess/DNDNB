@@ -35,6 +35,8 @@ export const S = {
     cat: 'all',               // the category shown in the list: 'all', 'recent' or a category key
     q: '', results: null,     // the search box and its results (null when not searching)
     editing: false, trashOpen: false, back: [],   // edit mode, the trash list, pages to go back to
+    tags: [],                 // tags in use: [{ tag, n }]; W.cat 'tag:<tag>' lists a tag's pages
+    collapsed: new Set(),     // page ids whose pages inside are folded away in the list
   },
 };
 
@@ -165,7 +167,9 @@ function pageSaver() {
     save: page => {
       const p = page || S.wiki.cur;
       if (!p) return Promise.resolve(null);
-      return api(`/api/wiki/${p.id}`, { method: 'PUT', body: { title: p.title, category: p.category, body: p.body, portrait: p.portrait || '' } });
+      return api(`/api/wiki/${p.id}`, { method: 'PUT', body: {
+        title: p.title, category: p.category, body: p.body, portrait: p.portrait || '',
+        fields: p.fields || {}, tags: p.tagsText ?? p.tags ?? [], parent_id: p.parent_id ?? null } });
     },
     onSaved: (res, latest) => { if (res) wikiListeners.saved.forEach(fn => fn(res, latest)); },
     onError: e => wikiListeners.error.forEach(fn => fn(e)),

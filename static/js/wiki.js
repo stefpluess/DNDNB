@@ -2,7 +2,8 @@
 // Pages are Markdown with [[Page title]] links (markdown.js); the server (wiki.py) stores them, keeps the
 // links for "Linked from", rewrites links when a page is renamed, and keeps deleted pages in a trash.
 // Images are uploaded (button, paste or drag and drop), written into the text as ![Caption|size](file),
-// open full-screen when clicked, and one can be the page's portrait.
+// open full-screen when clicked, and one can be the page's portrait. Each category has an info box (fields
+// from wiki.FIELDS; "page" fields are links), pages carry tags and can sit inside another page.
 
 import { bindForm } from './forms.js';
 import { completeLink, imageMarkdown, imageUrl, insertBlock, normTitle, openLink, renderMarkdown, setImageSize } from './markdown.js';
@@ -11,6 +12,8 @@ import { $, esc, toast } from './util.js';
 
 const W = S.wiki;
 const catName = key => W.categories.find(c => c.key === key)?.name || 'Unsorted';
+const catFields = key => W.categories.find(c => c.key === key)?.fields || [];
+const pageById = id => W.pages.find(p => p.id === id);
 const byTitle = new Map();                   // normalized title -> page, for resolving [[links]]
 const resolve = title => byTitle.get(normTitle(title)) || null;
 
@@ -31,7 +34,7 @@ function when(ts) {
 async function loadList() {
   try {
     const res = await api('/api/wiki');
-    Object.assign(W, { pages: res.pages, categories: res.categories, trash: res.trash });
+    Object.assign(W, { pages: res.pages, categories: res.categories, trash: res.trash, tags: res.tags });
   } catch (e) { toast(`Could not load the wiki: ${e.message}`); }
   byTitle.clear();
   for (const p of W.pages) byTitle.set(normTitle(p.title), p);
@@ -43,17 +46,27 @@ async function openPage(id, { edit = false, back = true } = {}) {
   let page;
   try { page = await api(`/api/wiki/${id}`); } catch (e) { toast(e.message); await loadList(); return renderWiki(); }
   if (back && W.cur && W.cur.id !== page.id) W.back = [...W.back.filter(x => x !== W.cur.id), W.cur.id].slice(-30);
-  Object.assign(W, { cur: page, editing: edit, trashOpen: false });
+  Object.assign(W, { cur: withDrafts(page), editing: edit, trashOpen: false });
   S.confirm.delPage = null;
   renderWiki();
   $('#wikiPage').scrollTop = 0;
   if (edit) $(page.body ? '#wikiBody' : '#wikiTitle')?.focus();
 }
 
-/** A new page: from a missing [[link]] (its title), or the New page button (in the category being viewed). */
-async function newPage(title) {
-  const cat = W.categories.some(c => c.key === W.cat) ? W.cat : 'unsorted';
+/** The editor's text versions of the tags and the page it's inside (they're saved when you leave the field). */
+function withDrafts(page) {
+  return Object.assign(page, { tagsText: (page.tags || []).join(', '), parentTitle: pageById(page.parent_id)?.title || '' });
+}
+
+/**
+ * A new page: from a missing [[link]] (its title), the New page button (in the category or under the tag being
+ * viewed), or "New page inside" (parent: a page, whose category it takes).
+ */
+async function newPage(title, parent = null) {
+  const cat = parent ? parent.category : W.categories.some(c => c.key === W.cat) ? W.cat : 'unsorted';
   const body = { category: cat };
+  if (parent) body.parent_id = parent.id;
+  if (W.cat.startsWith('tag:') && !parent) body.tags = [W.cat.slice(4)];
   if (title) body.title = title;
   else if (cat === 'session') body.title = `Session ${W.pages.filter(p => p.category === 'session').length + 1}`;
   let page;
@@ -71,6 +84,8 @@ function renderNav() {
     ...W.categories.map(c => ({ ...c, n: count(c.key) }))];
   $('#wikiCats').innerHTML = cats.map(c => `<button class="${W.cat === c.key && !W.results ? 'on' : ''}${c.key === 'unsorted' && c.n ? ' todo' : ''}" data-cat="${c.key}">
       <span>${esc(c.name)}</span>${c.n != null ? `<small>${c.n}</small>` : ''}</button>`).join('');
+  $('#wikiTags').innerHTML = (W.tags || []).length ? `<h4>Tags</h4><div class="chips">${W.tags.map(t =>
+    `<button class="chip wtag${W.cat === `tag:${t.tag}` && !W.results ? ' on' : ''}" data-tag="${esc(t.tag)}">#${esc(t.tag)} <b>${t.n}</b></button>`).join('')}</div>` : '';
   $('#wikiTrash').textContent = W.trash ? `Trash (${W.trash})` : 'Trash';
   $('#wikiTrash').classList.toggle('on', W.trashOpen);
 
@@ -78,12 +93,32 @@ function renderNav() {
   if (W.results) list = W.results;
   else if (W.cat === 'recent') list = [...W.pages].sort((a, b) => (b.updated || '').localeCompare(a.updated || '')).slice(0, 15);
   else if (W.cat === 'session') list = W.pages.filter(p => p.category === 'session').sort((a, b) => (b.created || '').localeCompare(a.created || ''));
+  else if (W.cat.startsWith('tag:')) list = W.pages.filter(p => p.tags.includes(W.cat.slice(4)));
   else list = W.cat === 'all' ? W.pages : W.pages.filter(p => p.category === W.cat);
   const sub = p => W.results ? p.snippet || catName(p.category) : W.cat === 'recent' ? `${catName(p.category)} · ${when(p.updated)}`
-    : W.cat === 'all' ? catName(p.category) : when(p.updated);
-  const thumb = p => { const f = p.portrait || W.pages.find(x => x.id === p.id)?.portrait; return f ? `<img class="thumb" src="${imageUrl(f)}" alt="" loading="lazy">` : ''; };
-  $('#wikiList').innerHTML = list.map(p => `<li><button class="${W.cur?.id === p.id ? 'on' : ''}" data-page="${p.id}">
-      ${thumb(p)}<span class="txt"><b>${esc(p.title)}</b><span>${esc(sub(p))}</span></span></button></li>`).join('')
+    : W.cat === 'all' || W.cat.startsWith('tag:') ? catName(p.category) : when(p.updated);
+  const thumb = p => { const f = p.portrait || pageById(p.id)?.portrait; return f ? `<img class="thumb" src="${imageUrl(f)}" alt="" loading="lazy">` : ''; };
+  const item = (p, depth = 0, kids = []) => {
+    const fold = kids.length ? `<button class="fold" data-fold="${p.id}" aria-label="${W.collapsed.has(p.id) ? 'Show' : 'Hide'} the pages inside" title="${kids.length} inside">${W.collapsed.has(p.id) ? '▸' : '▾'}</button>` : '';
+    return `<li style="--depth:${depth}"${kids.length ? ' class="has-kids"' : ''}>${fold}<button class="${W.cur?.id === p.id ? 'on' : ''}" data-page="${p.id}">
+      ${thumb(p)}<span class="txt"><b>${esc(p.title)}</b><span>${esc(sub(p))}</span></span></button></li>`;
+  };
+  let html;
+  if (W.results || ['recent', 'session'].includes(W.cat)) html = list.map(p => item(p)).join('');
+  else {
+    // a tree: pages inside another listed page sit under it (one whose parent isn't listed stays at the top)
+    const shown = new Set(list.map(p => p.id));
+    const kidsOf = id => list.filter(p => p.parent_id === id);
+    const branch = (p, depth, seen) => {
+      if (seen.has(p.id)) return '';
+      seen.add(p.id);
+      const kids = kidsOf(p.id);
+      return item(p, depth, kids) + (W.collapsed.has(p.id) ? '' : kids.map(k => branch(k, depth + 1, seen)).join(''));
+    };
+    const seen = new Set();
+    html = list.filter(p => !shown.has(p.parent_id)).map(p => branch(p, 0, seen)).join('');
+  }
+  $('#wikiList').innerHTML = html
     || `<li class="hint">${W.results ? `Nothing matches "${esc(W.q)}".` : W.pages.length ? 'No pages here yet.' : 'No pages yet. Start with New page.'}</li>`;
 }
 
@@ -92,8 +127,10 @@ function renderNav() {
 function pageHtml(p) {
   const html = renderMarkdown(p.body, resolve);
   return `<header class="wikihead">
-      <div class="titles">${W.back.length ? '<button class="link" data-w="back" title="Back to the previous page (Alt+←)">← Back</button>' : ''}
-        <h1>${esc(p.title)}</h1><p class="hint">${esc(catName(p.category))} · edited ${esc(when(p.updated))}</p></div>
+      <div class="titles"><div class="crumbs">${W.back.length ? '<button class="link" data-w="back" title="Back to the previous page (Alt+←)">← Back</button>' : ''}
+          ${p.breadcrumbs.length ? `<nav class="trail" aria-label="Inside">${p.breadcrumbs.map(b => `<a class="wl" href="#" data-page="${b.id}">${esc(b.title)}</a>`).join('<span aria-hidden="true">›</span>')}</nav>` : ''}</div>
+        <h1>${esc(p.title)}</h1><p class="hint">${esc(catName(p.category))} · edited ${esc(when(p.updated))}</p>
+        ${p.tags.length ? `<div class="chips">${p.tags.map(t => `<button class="chip wtag" data-tag="${esc(t)}">#${esc(t)}</button>`).join('')}</div>` : ''}</div>
       <div class="line"><button class="btn primary" data-w="edit" title="Edit (E)">Edit</button>
         <button class="btn sm bad" data-w="delete">${S.confirm.delPage === p.id ? 'Click again to move to trash' : 'Move to trash'}</button></div>
     </header>
@@ -104,13 +141,21 @@ function editorHtml(p) {
   return `<header class="wikihead editing">
       <div class="titles grow">
         <input class="field wtitle" id="wikiTitle" data-path="title" data-required data-commit value="${esc(p.title)}" aria-label="Page title" autocomplete="off">
-        <label class="hint">Category <select class="field" data-path="category" id="wikiCat">${W.categories.map(c =>
-          `<option value="${c.key}"${c.key === p.category ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+        <div class="metarow">
+          <label class="hint">Category <select class="field" data-path="category" id="wikiCat">${W.categories.map(c =>
+            `<option value="${c.key}"${c.key === p.category ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+          <label class="hint">Inside <input class="field" id="wikiParent" data-path="parentTitle" data-commit list="wikiTitles" value="${esc(p.parentTitle)}"
+            placeholder="no page (top level)" autocomplete="off" title="The page this one belongs to, like a tavern inside a town"></label>
+          <label class="hint grow">Tags <input class="field" id="wikiTagsIn" data-path="tagsText" data-commit value="${esc(p.tagsText)}"
+            placeholder="act-2, dungeon" autocomplete="off" title="Separate tags with commas"></label>
+        </div>
+        ${infoEditHtml(p)}
       </div>
       <div class="line"><span class="hint" id="wikiSaved"></span>
         <button class="btn" data-w="addimage" title="Add images (or paste them, or drag them onto the text)">Add image</button>
         <button class="btn primary" data-w="done" title="Done (Esc)">Done</button></div>
     </header>
+    <datalist id="wikiTitles">${W.pages.filter(x => x.id !== p.id).map(x => `<option value="${esc(x.title)}">`).join('')}</datalist>
     <div class="wikiedit">
       <div class="pane"><textarea class="field" id="wikiBody" data-path="body" spellcheck="true"
         placeholder="Write anything. Link pages with [[Page title]]: a page that doesn't exist yet can be created from its link.">${esc(p.body)}</textarea>
@@ -120,6 +165,22 @@ function editorHtml(p) {
     <p class="hint mdhelp"><code>[[Page]]</code> or <code>[[Page|text]]</code> link · <code># Heading</code> · <code>**bold**</code> · <code>*italic*</code>
       · <code>- list</code> · <code>- [ ] task</code> · <code>&gt; quote</code> · <code>| table |</code> · <code>---</code> line
       · images: paste or drop them, <code>![Caption|small](…)</code> (small, medium or full)</p>`;
+}
+
+/** The info box fields of the page's category, to fill in. Page fields suggest titles and save when you leave them. */
+function infoEditHtml(p) {
+  const defs = catFields(p.category);
+  if (!defs.length) return '';
+  const v = (p.fields || {})[p.category] || {};
+  const path = k => `fields.${p.category}.${k}`;
+  return `<div class="infoedit">${defs.map(f => {
+    const val = v[f.key] || '';
+    const input = f.type === 'choice'
+      ? `<select class="field" data-path="${path(f.key)}">${f.choices.map(c => `<option value="${esc(c)}"${c === val ? ' selected' : ''}>${esc(c || '—')}</option>`).join('')}</select>`
+      : f.type === 'date' ? `<input class="field" type="date" data-path="${path(f.key)}" value="${esc(val)}">`
+        : `<input class="field" data-path="${path(f.key)}" value="${esc(val)}" autocomplete="off"${f.type === 'page' ? ' data-commit list="wikiTitles" placeholder="a page"' : ''}>`;
+    return `<label class="lbl-f">${esc(f.label)}${input}</label>`;
+  }).join('')}</div>`;
 }
 
 async function trashHtml() {
@@ -160,7 +221,17 @@ function renderSide() {
     ? `<div class="portraitblk"><button class="portrait" data-lbopen="${p.portrait}" title="Open full-screen"><img src="${imageUrl(p.portrait)}" alt="Portrait of ${esc(p.title)}"></button>
         <div class="line"><button class="link" data-w="portrait-upload">Change</button><button class="link" data-w="portrait-clear">Remove</button></div></div>`
     : `<button class="portrait empty" data-w="portrait-upload">Add a portrait<small>a face, a map, a crest… (or open an image on the page and use it)</small></button>`;
-  box.innerHTML = `${portrait}<div class="blk"><h4>Linked from <span class="hint">${p.backlinks.length}</span></h4>
+  const defs = catFields(p.category), vals = (p.fields || {})[p.category] || {};
+  const pageVal = t => { const hit = resolve(t); return hit ? `<a class="wl" href="#" data-page="${hit.id}">${esc(t)}</a>` : `<a class="wl missing" href="#" data-new="${esc(t)}" title="No page yet: click to create it">${esc(t)}</a>`; };
+  const filled = defs.filter(f => vals[f.key]);
+  const info = defs.length ? `<div class="blk infobox"><h4>${esc(catName(p.category).replace(/s$/, '').replace(/^Session log$/, 'Session'))}</h4>${filled.length
+    ? `<dl>${filled.map(f => `<dt>${esc(f.label)}</dt><dd class="${f.type === 'choice' ? `v-${esc(vals[f.key].toLowerCase().replace(/\s+/g, '-'))}` : ''}">${f.type === 'page' ? pageVal(vals[f.key])
+      : f.type === 'date' ? esc(new Date(vals[f.key] + 'T00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })) : esc(vals[f.key])}</dd>`).join('')}</dl>`
+    : `<p class="hint">Nothing filled in yet. ${W.editing ? 'Fill it in at the top of the editor.' : 'Click Edit to add details.'}</p>`}</div>` : '';
+  const inside = `<div class="blk"><h4>Inside this page <span class="hint">${p.children.length || ''}</span></h4>
+      ${p.children.length ? `<ul class="linklist">${p.children.map(link).join('')}</ul>` : ''}
+      <button class="link" data-w="newchild">+ New page inside ${esc(p.title)}</button></div>`;
+  box.innerHTML = `${portrait}${info}${inside}<div class="blk"><h4>Linked from <span class="hint">${p.backlinks.length}</span></h4>
       ${p.backlinks.length ? `<ul class="linklist">${p.backlinks.map(link).join('')}</ul>` : '<p class="hint">No page links here yet. Link to it with [[' + esc(p.title) + ']].</p>'}</div>
     <div class="blk"><h4>Links to <span class="hint">${p.links.length}</span></h4>
       ${out ? `<ul class="linklist">${out}</ul>` : '<p class="hint">This page doesn\'t link anywhere yet.</p>'}</div>
@@ -355,6 +426,18 @@ function initViewer() {
 // ---------- events ----------
 
 function onClick(e) {
+  const fold = e.target.closest('[data-fold]');
+  if (fold) {
+    const id = +fold.dataset.fold;
+    if (W.collapsed.has(id)) W.collapsed.delete(id); else W.collapsed.add(id);
+    return renderNav();
+  }
+  const tag = e.target.closest('[data-tag]');
+  if (tag) {
+    W.cat = `tag:${tag.dataset.tag}`;
+    W.q = ''; W.results = null; $('#wikiSearch').value = '';
+    return renderNav();
+  }
   const pg = e.target.closest('[data-page]');
   if (pg) { e.preventDefault(); return openPage(+pg.dataset.page); }
   const nw = e.target.closest('[data-new]');
@@ -390,6 +473,7 @@ function onClick(e) {
   if (a === 'addimage') return pickFiles('text');
   if (a === 'portrait-upload') return pickFiles('portrait');
   if (a === 'portrait-clear') return setPortrait(null);
+  if (a === 'newchild') return newPage(null, W.cur);
   if (a === 'back') return goBack();
   if (a === 'delete') {
     if (S.confirm.delPage !== W.cur.id) { S.confirm.delPage = W.cur.id; return renderMain(); }
@@ -484,7 +568,16 @@ export function initWiki() {
   bindForm($('#wikiPage'), {
     target: () => (W.editing ? W.cur : null),
     onEdit: path => {
+      const p = W.cur;
       if (path === 'body') { updatePreview(); updateSuggest(); }
+      if (path === 'category') { renderMain(); renderSide(); $('#wikiCat')?.focus(); }   // its info box changes
+      if (path === 'parentTitle') {
+        const t = p.parentTitle.trim(), hit = t ? resolve(t) : null;
+        const refuse = msg => { toast(msg); p.parentTitle = pageById(p.parent_id)?.title || ''; $('#wikiParent').value = p.parentTitle; };
+        if (t && !hit) return refuse(`There's no page called "${t}": pick one from the list, or leave it empty for the top level.`);
+        if (hit?.id === p.id) return refuse("A page can't be inside itself.");
+        p.parent_id = hit ? hit.id : null;
+      }
       $('#wikiSaved').textContent = 'Saving…';
       scheduleWikiSave();
     },
@@ -518,11 +611,19 @@ export function initWiki() {
     if (W.cur?.id === res.id) {
       // keep what's being typed; take the server's links, dates and (when nothing newer is waiting) the text
       Object.assign(W.cur, { links: res.links, backlinks: res.backlinks, updated: res.updated, title: res.title, portrait: res.portrait,
-        ...(latest && !W.editing ? { body: res.body } : {}) });
+        tags: res.tags, parent_id: res.parent_id, breadcrumbs: res.breadcrumbs, children: res.children,
+        ...(latest ? { fields: res.fields } : {}), ...(latest && !W.editing ? { body: res.body } : {}) });
+      if (latest) {                       // show the tags as stored ("Act 2" -> act-2), unless they're being typed
+        const tagsIn = $('#wikiTagsIn');
+        W.cur.tagsText = res.tags.join(', ');
+        if (tagsIn && document.activeElement !== tagsIn) tagsIn.value = W.cur.tagsText;
+      }
       const s = $('#wikiSaved');
       if (s && latest) s.textContent = 'Saved';
     }
-    if (titleChanged || res.relinked) {
+    const li0 = pageById(res.id);
+    const listChanged = !li0 || li0.parent_id !== res.parent_id || li0.tags.join() !== res.tags.join();
+    if (titleChanged || res.relinked || listChanged) {
       await loadList();
       if (res.relinked) toast(`Renamed: updated the links in ${res.relinked} other page${res.relinked > 1 ? 's' : ''}.`);
       if (W.editing) updatePreview();
@@ -543,6 +644,13 @@ export function initWiki() {
       W.cur.title = stored.title;
       const t = $('#wikiTitle');
       if (t) t.value = stored.title;
+    }
+    // the same for where it sits (a loop: inside a page that's inside it)
+    if (stored && W.cur.parent_id !== stored.parent_id) {
+      W.cur.parent_id = stored.parent_id;
+      W.cur.parentTitle = pageById(stored.parent_id)?.title || '';
+      const t = $('#wikiParent');
+      if (t) t.value = W.cur.parentTitle;
     }
   });
 }

@@ -29,8 +29,9 @@ In the browser console, `ledger.S` shows the app state and `ledger.combat` the c
   (Unsorted is the inbox), `[[Page title]]` / `[[Page title|text]]` links, "Linked from", renaming rewrites
   links, search, a trash (nothing is erased). One campaign. Images: uploaded (button, paste, drag and drop),
   written as `![Caption|small|medium](file)`, a full-screen viewer with zoom, one portrait per page.
-  Planned next, in order: category info boxes, tags, pages inside pages; links to characters/monsters/fights
-  with Add to combat, an image gallery (with images no page uses), Markdown export.
+  Info boxes per category (`wiki.FIELDS`; "page" fields are links), tags, pages inside pages (`parent_id`,
+  breadcrumbs, a foldable tree). Planned next: links to characters/monsters/fights with Add to combat, an image
+  gallery (with images no page uses), Markdown export.
 
 ## Layout
 Python (the server owns storage and all rules math for sheets and homebrew):
@@ -40,7 +41,9 @@ Python (the server owns storage and all rules math for sheets and homebrew):
 - `rules.py`: character sheet math; `derive(sheet)`, `item_from_srd()`
 - `homebrew.py`: homebrew creatures; `normalize()` fills mods, saves, PB/XP from CR, attacks, auto text
 - `wiki.py`: wiki pages (`wiki_pages`), their links as normalized titles (`wiki_links`, so links to pages
-  that don't exist yet are kept), rename rewriting, search, soft delete (`deleted` column); images in
+  that don't exist yet are kept), rename rewriting, search, soft delete (`deleted` column); info box values
+  per category in `fields` JSON (`{"npc": {...}}`, so switching category loses nothing; page fields are links,
+  stored with the linked page's exact title), `tags` JSON (normalized `act-2`), `parent_id` (no loops); images in
   `data/wiki_images/` named `<16 hex of SHA-256>.<ext>` (same picture = same file), recognized by their bytes
   (PNG/JPEG/GIF/WebP only, never SVG), listed in `wiki_images`; served by `GET /api/wiki/images/<file>`.
   Pages only ever show uploaded files, never web addresses.
