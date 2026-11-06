@@ -151,6 +151,30 @@ class Rests(TempData):
         self.assertEqual((out["sheet"]["hp"], out["sheet"]["hit_dice_used"]), (28, 0))
 
 
+class Summons(TempData):
+    def test_wildfire_spirit_spends_a_wild_shape(self):
+        made = server.create_character(_Body({"sheet": {"name": "Ash", "class_name": "Druid", "level": 6, "subclass": "wildfire-tce",
+                                                        "abilities": {"wis": 16}}}), {})
+        out = server.summon(_Body({"key": "wildfire_spirit"}), {}, made["id"])
+        spirit = out["creature"]
+        self.assertEqual((spirit["hit_points"], spirit["armor_class"]), (5 + 5 * 6, 13))
+        seed = spirit["actions"][0]["attacks"][0]
+        self.assertEqual((seed["to_hit_mod"], seed["damage_bonus"]), (3 + 3, 3))     # spell attack +6, PB 3
+        self.assertEqual(out["character"]["sheet"]["resources_used"]["wild_shape"], 1)
+        with self.assertRaises(server.ApiError):
+            server.summon(_Body({"key": "steel_defender"}), {}, made["id"])
+
+    def test_cannon_forms_and_companion(self):
+        art = server.create_character(_Body({"sheet": {"name": "Bolt", "class_name": "Artificer", "level": 9, "subclass": "artillerist-tce",
+                                                       "abilities": {"int": 18}}}), {})
+        cannon = server.summon(_Body({"key": "eldritch_cannon", "form": "ballista"}), {}, art["id"])["creature"]
+        self.assertEqual((cannon["hit_points"], cannon["actions"][0]["attacks"][0]["damage_die_count"]), (45, 3))   # Explosive Cannon at 9
+        ranger = server.create_character(_Body({"sheet": {"name": "Rook", "class_name": "Ranger", "level": 5, "subclass": "beast-master-2024",
+                                                          "abilities": {"wis": 14}}}), {})
+        beast = server.summon(_Body({"key": "primal_companion", "form": "sky"}), {}, ranger["id"])["creature"]
+        self.assertEqual((beast["armor_class"], beast["hit_points"]), (15, 24))
+
+
 class _Body:
     """Stands in for the request handler: only json_body() is used by handlers."""
 

@@ -17,6 +17,7 @@ import common
 import db
 import homebrew
 import rules
+import summons
 
 STATIC_DIR = os.path.join(db.ROOT, "static")
 KINDS = {"monster", "spell", "equipment", "magic-item", "condition"}
@@ -135,6 +136,33 @@ def update_character(req, _q, cid):
     if report:
         out["rest"] = report
     return out
+
+
+def summon(req, _q, cid):
+    """Summon a subclass creature: returns it as a monster-shaped stat block, and spends the use it costs."""
+    body = req.json_body() or {}
+    key = body.get("key")
+    char = get_character(req, {}, cid)
+    sheet, derived = char["sheet"], char["derived"]
+    if key not in ((derived.get("subclass") or {}).get("summons") or []):
+        raise ApiError("This character can't summon that.")
+    info = summons.SUMMONS[key]
+    note, spent = "", False
+    cost = info["cost"]
+    if cost:
+        res = next((r for r in derived["resources"] if r["key"] == cost), None)
+        if res and res["used"] < res["max"]:
+            sheet["resources_used"][cost] = res["used"] + 1
+            spent = True
+            note = f"Spent one {res['name']}."
+        else:
+            note = "No free use left: spend a spell slot (or the use) by hand."
+    creature = summons.build(key, sheet, derived, body.get("form"))
+    creature["proficiency_bonus"] = derived["prof_bonus"]
+    if spent:
+        with db.campaign_session() as conn:
+            conn.execute("UPDATE characters SET data=?, updated=CURRENT_TIMESTAMP WHERE id=?", (db.dumps(sheet), cid))
+    return {"creature": creature, "note": note, "character": get_character(req, {}, cid)}
 
 
 def delete_character(_req, _q, cid):
@@ -265,6 +293,7 @@ ROUTES = [
     ("GET", r"/api/characters/(\d+)", get_character),
     ("PUT", r"/api/characters/(\d+)", update_character),
     ("DELETE", r"/api/characters/(\d+)", delete_character),
+    ("POST", r"/api/characters/(\d+)/summon", summon),
     ("GET", r"/api/homebrew", list_homebrew),
     ("POST", r"/api/homebrew", create_homebrew),
     ("GET", r"/api/homebrew/(hb-[\w-]+)", get_homebrew),

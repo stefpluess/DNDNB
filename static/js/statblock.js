@@ -99,7 +99,7 @@ export function statBlock(m) {
   return `<div class="statblock">
     <div class="props">
       <div><b>AC</b> ${monAC(m)}${m.armor_detail ? ` (${esc(m.armor_detail)})` : ''} <b class="gap">Initiative</b> ${rollBtn(`1d20${plusMinus(init)}`, 'check', `${who} initiative`, `${signed(init)} (${10 + init})`)}</div>
-      <div><b>HP</b> ${m.hit_points} (${esc(m.hit_dice || '')}) ${m.hit_dice ? rollBtn(m.hit_dice, 'hp', `${who} HP`, 'Roll') : ''}</div>
+      <div><b>HP</b> ${m.hit_points}${m.hit_dice ? ` (${esc(m.hit_dice)}) ${rollBtn(m.hit_dice, 'hp', `${who} HP`, 'Roll')}` : ''}</div>
       ${prop('Speed', speed)}
     </div>
     <table class="abil"><thead><tr><th></th><th>Score</th><th>Mod</th><th>Save</th></tr></thead><tbody>${rows}</tbody></table>
@@ -107,7 +107,8 @@ export function statBlock(m) {
       ${prop('Skills', skills)}
       ${prop('Vulnerabilities', ri.damage_vulnerabilities_display)}${prop('Resistances', ri.damage_resistances_display)}${prop('Immunities', immunities)}
       ${prop('Senses', senses.join(', '))}${prop('Languages', m.languages?.as_string || 'None')}
-      <div><b>CR</b> ${fmtCR(+m.challenge_rating)} (XP ${(m.experience_points || 0).toLocaleString()}; PB ${signed(m.proficiency_bonus ?? 2)})</div>
+      ${m.summoned ? `<div><b>PB</b> ${signed(m.proficiency_bonus ?? 2)} (its summoner's)</div>`
+        : `<div><b>CR</b> ${fmtCR(+m.challenge_rating)} (XP ${(m.experience_points || 0).toLocaleString()}; PB ${signed(m.proficiency_bonus ?? 2)})</div>`}
     </div>
     ${(m.traits || []).length ? `<div class="blk"><h4>Traits</h4>${m.traits.map(f => featHtml(f, who)).join('')}</div>` : ''}
     ${group('Actions', 'ACTION')}${group('Bonus Actions', 'BONUS_ACTION')}${group('Reactions', 'REACTION')}${group('Legendary Actions', 'LEGENDARY_ACTION')}

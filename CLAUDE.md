@@ -32,6 +32,7 @@ Python (the server owns storage and all rules math for sheets and homebrew):
 - `rules.py`: character sheet math; `derive(sheet)`, `item_from_srd()`
 - `homebrew.py`: homebrew creatures; `normalize()` fills mods, saves, PB/XP from CR, attacks, auto text
 - `common.py`: shared constants and formatting, served to the browser as `GET /api/meta`
+- `subclasses.py` + `subclass_data/`: the subclass engine and catalog; `summons.py`: summoned creatures
 - `import_srd.py`: Open5e importer; downloads everything before writing, never empties a category,
   prints a sanity check; `--save-dir` / `--from-dir` for offline copies
 - `db.py`: SQLite. `data/srd.db` = reference data (safe to rebuild).
@@ -92,7 +93,13 @@ Front end, `static/js/` (plain ES modules, no framework):
   in rules.py, class resources per level (RESOURCES), Jack of All Trades (skills only), Rage (damage,
   B/P/S resistance via the Raging condition, ends concentration), Petrified resistances, Sneak Attack,
   Divine Smite (+1d8 vs Fiend/Undead), Great Weapon / Thrown / Two-Weapon / Unarmed Fighting.
-- Not modeled: subclasses (sheets have a class only), multiclassing, feats.
+- Subclasses: 118 (PHB 2024, PHB 2014, Tasha's) in `subclass_data/` (one module per book), turned into
+  effects by `subclasses.py` (see its docstring for the effect keys) and applied in `rules.derive`.
+  Summaries are in our own words, never the books' text. Summoned creatures (Wildfire Spirit, Steel
+  Defender, Eldritch Cannon, Primal Companion) are built by `summons.py` as monster-shaped stat blocks.
+  `test_subclasses.py` evaluates every catalog entry at several levels.
+- Artificer (Tasha's) is supported as a class.
+- Not modeled: multiclassing, feats, subclasses from other books.
 
 ## Next steps, in order
 1. Run `python import_srd.py` on the live data and fix whatever the sanity check reports.

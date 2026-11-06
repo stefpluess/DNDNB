@@ -105,7 +105,7 @@ function chipHtml(x, i) {
 function saveBonus(c, ab) {
   const ch = ctx.linked(c);
   if (ch) return ch.derived.saves?.[ab]?.bonus ?? null;          // already includes Exhaustion
-  const m = c.ref && S.entryCache.get(c.ref);
+  const m = c.sb || (c.ref && S.entryCache.get(c.ref));
   if (!m) return null;
   const long = S.meta.ability_long[ab];
   const v = (m.saving_throws_all || {})[long] ?? (m.saving_throws || {})[long] ?? (m.modifiers || {})[long]
@@ -412,6 +412,7 @@ export async function renderInspector() {
     const c = selected();
     if (!c) { S.sel = null; return renderInspector(); }
     box.innerHTML = combatantPanel(c);
+    if (c.sb) $('#sbHost').innerHTML = statBlock(c.sb);      // a summoned creature carries its own stat block
     if (c.ref) {
       const [kind, idx] = c.ref.split(':');
       try {
@@ -573,6 +574,34 @@ function applyAttack(c) {
   changed(t, [`${who(t)} takes ${n}${notes.length ? ` (${notes.join(', ')})` : ''}.`, ...(n > 0 ? R.damage(ctx, t, n, last.crit) : [])]);
 }
 
+/** "Summon Wildfire Spirit" buttons for a party member whose subclass summons creatures. */
+function summonHtml(c) {
+  const list = ctx.linked(c)?.derived.subclass?.summon_info || [];
+  if (!list.length) return '';
+  return `<div class="blk"><h4>Summons</h4>${list.map(s => `<div class="line">
+      ${s.forms ? `<select class="field" id="form-${s.key}" aria-label="${esc(s.name)} form">${s.forms.map(([k, n]) => `<option value="${k}">${esc(n)}</option>`).join('')}</select>` : ''}
+      <button class="btn sm" data-a="summon" data-k="${s.key}">Summon ${esc(s.name)}</button></div>`).join('')}
+    <p class="hint">Joins the fight as an ally right after ${esc(who(c))} in initiative, with its own stat block.</p></div>`;
+}
+
+async function summonFor(c, key) {
+  const ch = ctx.linked(c);
+  let out;
+  try {
+    out = await api(`/api/characters/${ch.id}/summon`, { method: 'POST', body: { key, form: $(`#form-${key}`)?.value } });
+  } catch (e) { return toast(e.message); }
+  remember(`Summon ${out.creature.name}`);
+  S.chars.set(ch.id, out.character);
+  const m = out.creature;
+  const n = { id: uid(), name: m.name, kind: 'ally', init: c.init, mod: c.mod, seq: c.seq + 0.001, ac: m.armor_class, hp: m.hit_points, max: m.hit_points,
+    temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', rx: false, xp: 0, owner: c.id, sb: m,
+    res: R.monsterResources(m), def: R.monsterDefenses(m) };
+  S.enc.c.push(n);
+  R.joinCombat(ctx, n);
+  saveEnc(); renderTracker(); renderInspector();
+  toast(`${m.name} joins the fight after ${who(c)}.${out.note ? ' ' + out.note : ''}`);
+}
+
 function combatantPanel(c) {
   const v = R.vit(ctx, c), ch = ctx.linked(c), hp = R.hp(ctx, c), temp = R.tempHp(ctx, c);
   const slots = v.slots || [];
@@ -631,6 +660,7 @@ function combatantPanel(c) {
       <p class="hint">Blank rounds lasts until removed. For an effect another creature caused ("until the end of your next turn"), pick that creature's turn: it counts down there, and a timer set during that creature's own turn skips that turn. Adding Exhaustion raises its level by one.</p></div>
     <div class="blk"><h4>Spell slots ${ch ? '<span class="hint">from sheet</span>' : `<button class="link" data-a="editslots">${editing ? 'Done' : 'Edit'}</button>`}</h4>${slotHtml}</div>
     ${attackHtml(c)}
+    ${summonHtml(c)}
     ${ch ? derivedHtml(ch, { compact: true }) : ''}
     <div id="sbHost"></div>
     <div class="blk"><h4>Notes</h4><textarea class="field" id="insNotes" data-path="notes" placeholder="Tactics, reminders, loot…">${esc(c.notes)}</textarea></div>
@@ -785,6 +815,7 @@ async function onInspectClick(e) {
   if (label) remember(label);
   switch (a) {
     case 'atkapply': applyAttack(c); break;
+    case 'summon': return summonFor(c, b.dataset.k);
     case 'atkclear': S.atk.last = null; break;
     case 'rx': c.rx = !c.rx; changed(c); break;
     case 'leg': R.toggleSlot(c.res.leg, +b.dataset.p); changed(c); break;

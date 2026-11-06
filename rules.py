@@ -26,6 +26,7 @@ import re
 import uuid
 
 import subclasses
+import summons
 from common import ABILITIES, ABILITY_NAMES, SKILLS, mod, prof_bonus, short_key, signed, skill_key
 
 # 2024 Player's Handbook / SRD 5.2 starting proficiencies.
@@ -708,7 +709,9 @@ def derive(sheet):
         "resources": class_resources(cls, level, m, sheet.get("resources_used"), (sub or {}).get("resources", [])),
         "attune_limit": attune_limit, "speed_notes": speed_notes,
         "crit_range": crit,
-        "subclass": {k: sub[k] for k in ("key", "name", "source", "features", "spells", "summons", "hp_per_level")} if sub else None,
+        "subclass": {**{k: sub[k] for k in ("key", "name", "source", "features", "spells", "summons", "hp_per_level")},
+                     "summon_info": [{"key": k, "name": summons.SUMMONS[k]["name"], "forms": summons.SUMMONS[k]["forms"]} for k in sub["summons"]]}
+        if sub else None,
         "rage_damage": rage, "sneak_attack": sneak,
         "smite": cls == "paladin" and level >= 2,
         "hit_die": (CLASS_DEFAULTS.get(cls) or (None,) * 5)[4],
