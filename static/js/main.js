@@ -1,4 +1,4 @@
-// Boot: load reference lists and saved state, wire up the three views and the keyboard shortcuts.
+// Boot: load reference lists and saved state, wire up the four views and the keyboard shortcuts.
 
 import * as combat from './combat.js';
 import { initBestiary, showBestiary } from './bestiary.js';
@@ -8,6 +8,7 @@ import { S, api, ctx } from './store.js';
 import { initCombat, showCombat, stepTurn, undo } from './tracker.js';
 import { logEntries } from './ui.js';
 import { $, toast } from './util.js';
+import { initWiki, showWiki } from './wiki.js';
 
 async function loadState() {
   S.meta = await api('/api/meta');
@@ -24,8 +25,10 @@ async function loadState() {
   for (const c of await api('/api/characters')) S.chars.set(c.id, c);
   const saved = await api('/api/encounter');
   if (saved && Array.isArray(saved.c)) {
-    saved.c.forEach(c => { delete c._editSlots; c.exh ??= 0; });   // older saves stored a UI flag here
+    // older saves: a UI flag stored here, fields that didn't exist yet
+    saved.c.forEach(c => { delete c._editSlots; c.exh ??= 0; c.conds ??= []; c.ds ??= { s: 0, f: 0 }; c.slots ??= []; });
     saved.ticks ??= [];
+    saved.prompts ??= [];
     S.enc = saved;
   }
 }
@@ -57,10 +60,12 @@ async function boot() {
   initCombat();
   initParty();
   initBestiary();
+  initWiki();
   initKeyboard();
   registerView('combat', showCombat);
   registerView('party', showParty);
   registerView('bestiary', showBestiary);
+  registerView('wiki', showWiki);
   document.querySelector('.views').addEventListener('click', e => {
     const b = e.target.closest('[data-view]');
     if (b) switchView(b.dataset.view);

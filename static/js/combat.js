@@ -54,8 +54,9 @@ export function lifeState(ctx, c) {
 }
 function die(ctx, c, why) {
   c.dead = true;
-  c.conds = c.conds.filter(x => x.n !== 'Concentrating');
-  return [`${nameOf(ctx, c)} dies${why ? ` (${why})` : ''}.`];
+  // the dead can't concentrate: the effects tied to that concentration end with it
+  const ended = hasCond(c, 'Concentrating') ? endConcentration(ctx, c) : [];
+  return [`${nameOf(ctx, c)} dies${why ? ` (${why})` : ''}.`, ...ended];
 }
 
 /** Revival magic (Revivify, Raise Dead...): back to life with `amount` HP, death saves cleared. */
@@ -156,8 +157,12 @@ export function step(ctx, dir) {
     addSavePrompts(ctx, first, 'start');
     return [...msgs, ...dyingNote(ctx)];
   }
+  const cur = enc.c.find(c => c.id === enc.active);
+  if (!cur) {                                   // the active creature is gone (an older or hand-edited save)
+    endCombat(enc);
+    return dir > 0 ? step(ctx, 1) : [];
+  }
   if (dir > 0) {
-    const cur = enc.c.find(c => c.id === enc.active);
     enc.ticks.push(snapshot(enc));
     if (enc.ticks.length > 100) enc.ticks.shift();
     msgs.push(...tick(ctx, cur, 'end'));
@@ -286,7 +291,6 @@ export function damage(ctx, c, amount, crit = false) {
   const st = ctx.enc.stats ||= { taken: {}, downs: {} };
   (st.names ||= {})[c.id] = name;                                    // creatures may be removed before the summary
   st.taken[c.id] = (st.taken[c.id] || 0) + absorbed + (before - hp(ctx, c));
-  if (!wasDown && hp(ctx, c) === 0 && c.kind === 'pc') st.downs[c.id] = (st.downs[c.id] || 0) + 1;
   if (!wasDown && hp(ctx, c) === 0 && c.kind === 'foe') (st.defeated ||= {})[c.id] = { name, xp: +c.xp || 0 };
   if (!wasDown && hp(ctx, c) === 0 && c.kind === 'pc' && rest - before < maxHp(ctx, c) && c.cheatDeath?.length) {
     // Relentless Endurance, Undying Sentinel...: drop to some HP instead of 0 (the tracker spends the use)
@@ -296,6 +300,8 @@ export function damage(ctx, c, amount, crit = false) {
     msgs.push(`${cd.from}: ${name} drops to ${hp(ctx, c)} HP instead of 0.`);
     return msgs;
   }
+  // counted after the features above: a character kept on its feet didn't drop
+  if (!wasDown && hp(ctx, c) === 0 && c.kind === 'pc') st.downs[c.id] = (st.downs[c.id] || 0) + 1;
   if (!wasDown && hp(ctx, c) === 0) {
     if (c.kind === 'pc' && rest - before >= maxHp(ctx, c)) {
       if (!hasCond(c, 'Unconscious')) c.conds.push({ n: 'Unconscious', d: null });

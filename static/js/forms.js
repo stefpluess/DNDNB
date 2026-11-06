@@ -7,8 +7,10 @@
 //   data-type="opt"             select whose empty option means null
 //   data-required               text that may not be blank (restored when you leave it)
 //   data-list="prof.saves"      checkbox that adds/removes its value in that array
+//   data-commit                 text that saves when you leave the field (or press Enter), not while typing:
+//                               for values whose change has side effects, like a wiki page's title
 //
-// Text and number fields save as you type; selects and checkboxes save on change.
+// Text and number fields save as you type; selects, checkboxes and data-commit fields save on change.
 
 import { listAt, setPath } from './util.js';
 
@@ -27,6 +29,9 @@ export function convert(el) {
 export function isTyping(el) {
   return (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') && !['checkbox', 'radio'].includes(el.type);
 }
+
+/** Does the field write its value while typing ('input') or only once it changes ('change')? */
+export const savesWhileTyping = el => isTyping(el) && el.dataset.commit === undefined;
 
 /**
  * bindForm(root, { target, onEdit })
@@ -47,7 +52,7 @@ export function bindForm(root, { target, onEdit }) {
     }
     const path = el.dataset.path;
     if (!path) return;
-    const typing = isTyping(el);
+    const typing = savesWhileTyping(el);
     if (!typing && phase !== 'change') return;
     const value = convert(el);
     if (value === undefined) {                       // blank where a value is required

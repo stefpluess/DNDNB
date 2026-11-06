@@ -11,7 +11,7 @@ Desktop-first (wide screens, three columns). No phone layout needed.
 python import_srd.py      # once: downloads SRD 5.2 from Open5e into data/srd.db, ends with a sanity check
 python server.py --open   # starts the app (start.bat / start.sh do both)
 
-python -m unittest test_rules test_homebrew test_server   # Python tests
+python -m unittest test_rules test_homebrew test_server test_subclasses test_wiki   # Python tests
 node --test "js_tests/*.test.js"                          # front-end tests (Node is only needed for tests)
 ```
 Python 3.9+, standard library only. No pip packages, no build step.
@@ -25,19 +25,36 @@ In the browser console, `ledger.S` shows the app state and `ledger.combat` the c
 - Bestiary view: homebrew creature editor (new, or copied from an SRD monster), live stat block,
   auto-written 2024-style attack text.
 - PCs in combat share HP, slots and Exhaustion with their sheet.
+- Wiki view: campaign notes for the DM only (players never see the app). Markdown pages in categories
+  (Unsorted is the inbox), `[[Page title]]` / `[[Page title|text]]` links, "Linked from", renaming rewrites
+  links, search, a trash (nothing is erased). One campaign. Images: uploaded (button, paste, drag and drop),
+  written as `![Caption|small|medium](file)`, a full-screen viewer with zoom, one portrait per page.
+  Info boxes per category (`wiki.FIELDS`; "page" fields are links), tags, pages inside pages (`parent_id`,
+  breadcrumbs, a foldable tree). Planned next: links to characters/monsters/fights with Add to combat, an image
+  gallery (with images no page uses), Markdown export.
 
 ## Layout
 Python (the server owns storage and all rules math for sheets and homebrew):
-- `server.py`: http.server JSON API + static files; routes are a list at the bottom
+- `server.py`: http.server JSON API + static files; routes are a list at the bottom. `check_caller()` refuses
+  requests whose Host isn't 127.0.0.1/localhost (DNS rebinding) or whose Origin is another site; request bodies
+  must be JSON objects
 - `rules.py`: character sheet math; `derive(sheet)`, `item_from_srd()`
 - `homebrew.py`: homebrew creatures; `normalize()` fills mods, saves, PB/XP from CR, attacks, auto text
+- `wiki.py`: wiki pages (`wiki_pages`), their links as normalized titles (`wiki_links`, so links to pages
+  that don't exist yet are kept), rename rewriting, search, soft delete (`deleted` column); info box values
+  per category in `fields` JSON (`{"npc": {...}}`, so switching category loses nothing; page fields are links,
+  stored with the linked page's exact title), `tags` JSON (normalized `act-2`), `parent_id` (no loops); images in
+  `data/wiki_images/` named `<16 hex of SHA-256>.<ext>` (same picture = same file), recognized by their bytes
+  (PNG/JPEG/GIF/WebP only, never SVG), listed in `wiki_images`; served by `GET /api/wiki/images/<file>`.
+  Pages only ever show uploaded files, never web addresses.
 - `common.py`: shared constants and formatting, served to the browser as `GET /api/meta`
 - `subclasses.py` + `subclass_data/`: the subclass engine and catalog; `summons.py`: summoned creatures
 - `import_srd.py`: Open5e importer; downloads everything before writing, never empties a category,
   prints a sanity check; `--save-dir` / `--from-dir` for offline copies
 - `db.py`: SQLite. `data/srd.db` = reference data (safe to rebuild).
-  `data/campaign.db` = the user's characters, homebrew, saved encounters (prepared fights) and the
-  current encounter. New tables are added with CREATE TABLE IF NOT EXISTS.
+  `data/campaign.db` = the user's characters, homebrew, saved encounters (prepared fights), the wiki and the
+  current encounter (wiki images live next to it in `data/wiki_images/`). New tables are added with
+  CREATE TABLE IF NOT EXISTS; new columns on existing tables go in `db.CAMPAIGN_COLUMNS` (added, never dropped).
   **Never touch campaign.db destructively.**
 
 Front end, `static/js/` (plain ES modules, no framework):
@@ -46,7 +63,8 @@ Front end, `static/js/` (plain ES modules, no framework):
   death saves, conditions, exhaustion, group naming)
 - `dice.js`, `autosave.js`, `forms.js`: dice parsing, ordered debounced saving, form binding
 - `history.js`: undo/redo stack used by the combat view
-- `tracker.js`, `party.js`, `bestiary.js`: the three views
+- `tracker.js`, `party.js`, `bestiary.js`, `wiki.js`: the four views
+- `markdown.js`: wiki page Markdown to HTML (escapes everything; link syntax matches `wiki.LINK`)
 - `statblock.js`, `sheetview.js`: stat blocks, spells, items, computed character stats
 - `ui.js`, `nav.js`, `util.js`: roll log, view switching, helpers (`esc`, `signed`, `setPath`, `toast`)
 
@@ -55,7 +73,8 @@ Front end, `static/js/` (plain ES modules, no framework):
   so one renderer, search and combat path serves both. Keep it that way.
 - Rules logic lives in testable code (`rules.py`, `homebrew.py`, `combat.js`), never in UI code.
   Add a test with every rules change.
-- Forms use `data-path` / `data-type` (num, numnull, opt) / `data-required` / `data-list` and
+- Forms use `data-path` / `data-type` (num, numnull, opt) / `data-required` / `data-list` / `data-commit`
+  (text saved on change, not while typing: for values with side effects like a wiki title) and
   `bindForm()` from `forms.js`. No new ad-hoc input handlers.
 - Saving goes through the autosavers in `store.js` (they keep saves to one thing in order).
 - Every combat action calls `remember(label)` in `tracker.js` right before it changes the fight, so Ctrl+Z can undo it.
@@ -63,7 +82,8 @@ Front end, `static/js/` (plain ES modules, no framework):
 - UI-only state lives in `S`, never in saved data.
 - Negative numbers display with a typographic minus (`signed()`); dice expressions use "-".
 - Skill keys use underscores (`sleight_of_hand`); `common.skill_key()` normalizes.
-- One stylesheet; colors only as tokens on `:root` with dark-mode overrides.
+- One stylesheet; colors only as tokens on `:root` with dark-mode overrides (shadows too: `--shadow`, `--backdrop`).
+  Its sections follow the layout comment at the top; numbers use lining figures (Alegreya's default 0 looks like o).
 
 ## Things learned the hard way
 - Open5e labels the plain Shield as "heavy" armor with `ac_base` 2. `rules.is_shield()` recognizes
@@ -119,8 +139,6 @@ Front end, `static/js/` (plain ES modules, no framework):
 
 ## Next steps, in order
 1. Run `python import_srd.py` on the live data and fix whatever the sanity check reports.
-2. Server hardening: check the Origin/Host header on API requests so a website open in the
-   same browser can't call the local server.
-3. Ideas not chosen yet: a desktop window (Tauri or Electron around the same code).
+2. Ideas not chosen yet: a desktop window (Tauri or Electron around the same code).
 
 Limits: SRD 5.2 monsters only (not the full Monster Manual).

@@ -5,6 +5,7 @@ A local battle tracker for the DM, built for the **D&D 2024 rules ("5.5e", SRD 5
 - **Combat view**: initiative order, HP, temp HP, conditions with round timers, spell slots, death saves, monster stat blocks with clickable attack and damage rolls, and a dice log.
 - **Party view**: character sheets. AC, attack bonus, damage, saves, skills, spell DC and initiative are calculated from ability scores, proficiencies and equipped gear.
 - **Bestiary**: your own homebrew creatures, built from scratch or copied from an SRD monster, with a live 2024-style stat block.
+- **Wiki**: your campaign notes. Pages for NPCs, places, factions, quests, items, lore and session logs, linked to each other with `[[Page title]]`.
 - **Library**: SRD 5.2 monsters, spells, weapons, armor, magic items and conditions, downloaded once from Open5e and stored locally so it works offline at the table.
 
 It only needs Python 3.9 or newer. No packages to install.
@@ -69,6 +70,24 @@ If you used an earlier 2014 version of this app, run `python import_srd.py` once
 - Your creatures appear in the combat library (marked *Homebrew*) with the same roll buttons as SRD monsters. *Add to combat* in the editor uses the count from the library.
 - Homebrew is stored in `data/campaign.db`, so re-importing the SRD never touches it.
 
+**Wiki (campaign notes)**
+- Click *New page*. Give it a title, pick a category (or leave it in *Unsorted* and file it later), and write. Everything saves as you type; the preview next to the text shows the finished page.
+- Link to another page with `[[Page title]]`, or `[[Page title|other words]]` to show different text. Typing `[[` suggests existing pages.
+- A link to a page that doesn't exist yet is shown dashed in yellow. Click it to create that page, so you can sketch out the world as you write.
+- Each page lists the pages that link to it (*Linked from*) on the right.
+- Renaming a page updates every link to it in your other pages.
+- Formatting: `# Heading`, `**bold**`, `*italic*`, `- list`, `- [ ] task` (`- [x]` when done), `> quote`, tables with `| a | b |`, and `---` for a line.
+- Browse by category on the left, or search (press `/`) for any word in titles and text. *Recently edited* shows what you touched last; *Session log* lists sessions newest first. Press `E` to edit the open page, `Esc` to stop editing, `Alt+←` to go back.
+- **Info boxes**: each category has its own details, filled in at the top of the editor and shown on the right: an NPC's species, role, location, faction, attitude and status; a quest's status, who gave it, where and the reward; a location's type, ruler, population and danger; and so on. Fields that name another page (an NPC's *Location*) work like links: they appear in that page's *Linked from* and follow it when it's renamed. Switching a page's category keeps what you filled in for the old one.
+- **Tags**: type them in the editor, separated by commas (`act-2, dungeon`). They show as chips under the title; click one, or pick it under *Tags* on the left, to list its pages. Search with `#dungeon` for one tag.
+- **Pages inside pages**: set *Inside* in the editor (a tavern inside a town, a town inside a region), or click *New page inside* on the right. The page shows the trail it sits in above its title, lists its own pages on the right, and the page list on the left becomes a tree you can fold with the arrows.
+- *Move to trash* never erases a page: open *Trash* at the bottom left to restore it.
+- **Images**: while editing, click *Add image*, paste a screenshot, or drag pictures onto the text (drop them on a page you're reading and they go at the end). PNG, JPEG, GIF and WebP, up to 20 MB.
+  - An image is written as `![Caption](file)`. Hover it in the preview and pick *Small* (beside the text), *Medium* or *Full*; that adds `|small` or `|medium` to the caption. Put several images on one line to show them side by side.
+  - Click any image to see it full-screen. Click the picture (or press `Z`) for its actual size and drag to look around a big map; the arrow keys step through the page's images.
+  - Give a page a portrait (a face, a map, a crest) with *Add a portrait* on the right, or *Use as page portrait* in the full-screen view. Portraits show as small pictures in the page list.
+- Pages are stored in `data/campaign.db` and images in `data/wiki_images/`: back up the whole `data/` folder.
+
 ## Files
 
 | File | What it does |
@@ -76,10 +95,12 @@ If you used an earlier 2014 version of this app, run `python import_srd.py` once
 | `server.py` | Local web server and JSON API (standard library only) |
 | `rules.py` | The 2024 rules math for character sheets |
 | `homebrew.py` | Homebrew creatures: derived stats, attacks and auto descriptions |
+| `wiki.py` | The campaign wiki: pages, links, renaming, search, the trash, images and portraits |
 | `common.py` | Shared constants (abilities, skills, sizes, CR tables) and formatting; the front end reads them via `/api/meta` |
 | `import_srd.py` | Downloads or imports SRD 5.2 data into `data/srd.db` |
 | `db.py` | SQLite helpers |
-| `data/campaign.db` | Your characters, homebrew creatures and the current encounter. Back this file up. |
+| `data/campaign.db` | Your characters, homebrew creatures, wiki pages and the current encounter. Back this file up. |
+| `data/wiki_images/` | Images added to the wiki. Back it up together with `campaign.db`. |
 | `static/index.html`, `static/style.css` | The page and its styles |
 | `static/js/` | The interface, one module per job (see below) |
 
@@ -88,20 +109,21 @@ The front end is split into plain JavaScript modules (no build step):
 | Module | Job |
 |---|---|
 | `main.js` | Starts the app, loads saved state, keyboard shortcuts |
-| `store.js` | Shared state, server calls, saving for the encounter, characters and homebrew |
+| `store.js` | Shared state, server calls, saving for the encounter, characters, homebrew and wiki pages |
 | `combat.js` | Combat rules: turns, damage, temp HP, concentration, death saves, conditions |
 | `dice.js` | Dice expressions |
 | `autosave.js` | Debounced saving that keeps saves to one thing in order |
-| `forms.js` | Connects form fields to data (`data-path`, `data-type`, `data-list`) |
-| `tracker.js`, `party.js`, `bestiary.js` | The three views |
+| `forms.js` | Connects form fields to data (`data-path`, `data-type`, `data-list`, `data-commit`) |
+| `markdown.js` | Turns wiki page text into HTML, with `[[links]]` and images |
+| `tracker.js`, `party.js`, `bestiary.js`, `wiki.js` | The four views |
 | `statblock.js`, `sheetview.js` | Stat blocks, spells, items, and computed character stats |
 | `ui.js`, `nav.js`, `util.js` | Roll log, view switching, small helpers |
 
 ## Tests
 
 ```
-python -m unittest test_rules test_homebrew test_server   # rules, homebrew, server and importer
-node --test "js_tests/*.test.js"                          # combat rules, dice, saving, forms (needs Node 18+)
+python -m unittest test_rules test_homebrew test_server test_subclasses test_wiki   # rules, homebrew, server, importer, wiki
+node --test "js_tests/*.test.js"                          # combat rules, dice, saving, forms, wiki text (needs Node 18+)
 ```
 
 The app itself needs only Python; Node is only for running the JavaScript tests. When something looks wrong in the browser, open the developer console and type `ledger.S` to see the app's state.

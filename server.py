@@ -18,6 +18,7 @@ import db
 import homebrew
 import rules
 import summons
+import wiki
 
 STATIC_DIR = os.path.join(db.ROOT, "static")
 KINDS = {"monster", "spell", "equipment", "magic-item", "condition"}
@@ -27,6 +28,42 @@ class ApiError(Exception):
     def __init__(self, msg, status=400):
         super().__init__(msg)
         self.status = status
+
+
+class Raw:
+    """A handler's reply that isn't JSON (an image)."""
+
+    def __init__(self, data, mime, cache="no-store"):
+        self.data, self.mime, self.cache = data, mime, cache
+
+
+# ---------- who may call the server ----------
+#
+# The server only listens on 127.0.0.1, but a web page open in the same browser could still send it
+# requests (a form posting to http://127.0.0.1:8765), or reach it under its own domain name through
+# DNS rebinding. So every request must name this server in its Host header, and a request that says
+# where it comes from (Origin, which browsers send on cross-site and non-GET requests) must come from
+# the app itself.
+
+LOCAL_NAMES = ("127.0.0.1", "localhost", "[::1]")
+
+
+def local_hosts(port):
+    return {f"{n}:{port}" for n in LOCAL_NAMES} | ({*LOCAL_NAMES} if port == 80 else set())
+
+
+def check_caller(headers, port, api=True):
+    """Raise ApiError(403) unless the request comes from the app's own page (or a local tool like curl).
+    api=False (static files): following a link to the app from another site still opens it."""
+    hosts = local_hosts(port)
+    host = (headers.get("Host") or "").strip().lower()
+    if host and host not in hosts:
+        raise ApiError("This server only answers requests addressed to 127.0.0.1 or localhost.", 403)
+    origin = (headers.get("Origin") or "").strip().lower()
+    if origin and origin not in {f"http://{h}" for h in hosts}:
+        raise ApiError("Requests from other websites are not allowed.", 403)
+    if api and (headers.get("Sec-Fetch-Site") or "").lower() in ("cross-site", "same-site"):
+        raise ApiError("Requests from other websites are not allowed.", 403)
 
 
 # ---------- handlers: reference data ----------
@@ -128,7 +165,11 @@ def update_character(req, _q, cid):
     if body.get("rest") == "long":
         report = rules.long_rest(sheet)
     elif body.get("rest") == "short":
-        report = rules.short_rest(sheet, int(body.get("hit_dice") or 0))
+        try:
+            spend = int(body.get("hit_dice") or 0)
+        except (TypeError, ValueError):
+            raise ApiError("hit_dice must be a whole number.")
+        report = rules.short_rest(sheet, spend)
     with db.campaign_session() as conn:
         cur = conn.execute("UPDATE characters SET name=?, data=?, updated=CURRENT_TIMESTAMP WHERE id=?",
                            (sheet.get("name") or "Unnamed", db.dumps(sheet), cid))
@@ -284,6 +325,71 @@ def delete_saved(_req, _q, sid):
     return {"ok": True}
 
 
+# ---------- handlers: campaign wiki ----------
+
+def _wiki(fn, *args, **kw):
+    """Run a wiki function in a campaign session; its errors become API errors."""
+    try:
+        with db.campaign_session() as conn:
+            return fn(conn, *args, **kw)
+    except wiki.WikiError as e:
+        raise ApiError(str(e), e.status)
+
+
+def _page_fields(body):
+    return {k: body[k] for k in ("title", "category", "body", "portrait", "fields", "tags", "parent_id") if k in body}
+
+
+def list_wiki(_req, _q):
+    return _wiki(wiki.list_pages)
+
+
+def search_wiki(_req, q):
+    return _wiki(wiki.search, q.get("q", [""])[0])
+
+
+def get_wiki(_req, _q, pid):
+    return _wiki(wiki.get_page, int(pid))
+
+
+def create_wiki(req, _q):
+    return _wiki(wiki.create_page, **_page_fields(req.json_body() or {}))
+
+
+def update_wiki(req, _q, pid):
+    return _wiki(wiki.update_page, int(pid), **_page_fields(req.json_body() or {}))
+
+
+def delete_wiki(_req, _q, pid):
+    return _wiki(wiki.trash_page, int(pid))
+
+
+def wiki_trash(_req, _q):
+    return _wiki(wiki.list_trash)
+
+
+def restore_wiki(_req, _q, pid):
+    return _wiki(wiki.restore_page, int(pid))
+
+
+def upload_image(req, q):
+    """POST the image's bytes as the body (any Content-Type); ?name= is the file name it came with."""
+    data = req.raw_body(wiki.MAX_IMAGE_BYTES)
+    if not data:
+        raise ApiError("No image was sent.")
+    return _wiki(wiki.save_image, data, q.get("name", [""])[0], db.wiki_images_dir())
+
+
+def get_image(_req, _q, file):
+    try:
+        path, mime = wiki.image_path(db.wiki_images_dir(), file)
+    except wiki.WikiError as e:
+        raise ApiError(str(e), e.status)
+    with open(path, "rb") as f:
+        # named by their content, so a file never changes: browsers may keep it
+        return Raw(f.read(), mime, "public, max-age=31536000, immutable")
+
+
 ROUTES = [
     ("GET", r"/api/status", status),
     ("GET", r"/api/meta", meta),
@@ -307,6 +413,16 @@ ROUTES = [
     ("DELETE", r"/api/saved-encounters/(\d+)", delete_saved),
     ("GET", r"/api/encounter", get_encounter),
     ("PUT", r"/api/encounter", put_encounter),
+    ("GET", r"/api/wiki", list_wiki),
+    ("POST", r"/api/wiki", create_wiki),
+    ("GET", r"/api/wiki/search", search_wiki),
+    ("GET", r"/api/wiki/trash", wiki_trash),
+    ("GET", r"/api/wiki/(\d+)", get_wiki),
+    ("PUT", r"/api/wiki/(\d+)", update_wiki),
+    ("DELETE", r"/api/wiki/(\d+)", delete_wiki),
+    ("POST", r"/api/wiki/(\d+)/restore", restore_wiki),
+    ("POST", r"/api/wiki/images", upload_image),
+    ("GET", r"/api/wiki/images/([\w.]+)", get_image),
 ]
 
 
@@ -317,13 +433,40 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def json_body(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        if not n:
+        """The request's JSON object, or None without a body. Every route takes an object."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ApiError("Bad Content-Length header.")
+        if n <= 0:
             return None
         try:
-            return json.loads(self.rfile.read(n))
-        except json.JSONDecodeError:
+            body = json.loads(self.rfile.read(n))
+        except (json.JSONDecodeError, UnicodeDecodeError):
             raise ApiError("Request body is not valid JSON.")
+        if body is not None and not isinstance(body, dict):
+            raise ApiError("Request body must be a JSON object.")
+        return body
+
+    def raw_body(self, limit):
+        """The request body as bytes, refused before reading when it's over `limit`."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ApiError("Bad Content-Length header.")
+        if n > limit:
+            self.close_connection = True          # the unread body can't be left on the connection
+            raise ApiError(f"That file is larger than {limit // (1024 * 1024)} MB.", 413)
+        return self.rfile.read(n) if n > 0 else b""
+
+    def send_raw(self, raw):
+        self.send_response(200)
+        self.send_header("Content-Type", raw.mime)
+        self.send_header("Content-Length", str(len(raw.data)))
+        self.send_header("Cache-Control", raw.cache)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(raw.data)
 
     def send_json(self, obj, code=200):
         data = json.dumps(obj).encode()
@@ -351,11 +494,13 @@ class Handler(BaseHTTPRequestHandler):
     def dispatch(self, method):
         url = urlparse(self.path)
         try:
+            check_caller(self.headers, self.server.server_address[1], api=url.path.startswith("/api/"))
             for m, pattern, fn in ROUTES:
                 if m == method:
                     match = re.fullmatch(pattern, url.path)
                     if match:
-                        return self.send_json(fn(self, parse_qs(url.query), *match.groups()))
+                        out = fn(self, parse_qs(url.query), *match.groups())
+                        return self.send_raw(out) if isinstance(out, Raw) else self.send_json(out)
             if method == "GET" and not url.path.startswith("/api/"):
                 return self.send_static(url.path)
             self.send_json({"error": "Not found"}, 404)

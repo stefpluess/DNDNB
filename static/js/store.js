@@ -17,17 +17,27 @@ export const S = {
   targets: new Map(),         // combatant id -> { half, mod }: ticked for area damage (UI only, never saved)
   groupAmt: '',               // what's typed in the area damage box
   group: { type: '', ab: '', dc: '', onSave: 'half' },   // area damage: damage type and saving throw
-  atk: { target: {}, mode: {}, cover: {}, last: null },
+  atk: { target: {}, mode: {}, cover: {}, last: null },   // attacks: target, roll mode and cover per attacker id, last result (UI only)
   castSpell: "Hunter's Mark",  // the spell picked in the inspector's Cast block
-  condMoreOpen: false,        // the "concentration and repeated saves" options are open   // attacks: target and roll mode per attacker id, last attack result (UI only)
+  condMoreOpen: false,        // the "concentration and repeated saves" options are open
   // party view
   currentChar: null,
   // bestiary view
   monList: [],
   curMon: null,               // { idx, data }
   // two-step confirmations ("click again to …")
-  confirm: { del: null, clear: false, delChar: null, delMon: null, delFight: null },
+  confirm: { del: null, clear: false, delChar: null, delMon: null, delFight: null, delPage: null },
   saved: [],                  // saved encounters, as last loaded
+  // wiki view
+  wiki: {
+    pages: [], categories: [], trash: 0,   // the page list (no bodies) and the trash count, from /api/wiki
+    cur: null,                // the open page: { id, title, category, body, links, backlinks, ... }
+    cat: 'all',               // the category shown in the list: 'all', 'recent' or a category key
+    q: '', results: null,     // the search box and its results (null when not searching)
+    editing: false, trashOpen: false, back: [],   // edit mode, the trash list, pages to go back to
+    tags: [],                 // tags in use: [{ tag, n }]; W.cat 'tag:<tag>' lists a tag's pages
+    collapsed: new Set(),     // page ids whose pages inside are folded away in the list
+  },
 };
 
 export async function api(path, opts = {}) {
@@ -141,3 +151,41 @@ function monSaver(idx) {
 }
 export const scheduleMonSave = idx => monSaver(idx).schedule();
 export const saveMonNow = idx => monSaver(idx).flush();
+
+// ---------- wiki pages ----------
+
+let wikiSaver = null;
+const wikiListeners = { saved: [], error: [] };
+/** fn(res, latest) runs after the open wiki page was saved; fn(error) after a save failed. */
+export const onWikiSaved = fn => wikiListeners.saved.push(fn);
+export const onWikiError = fn => wikiListeners.error.push(fn);
+
+function pageSaver() {
+  // one saver for every page: saves stay in order even when the DM switches pages quickly
+  wikiSaver ||= createAutosave({
+    key: 'wiki', delay: 500,
+    save: page => {
+      const p = page || S.wiki.cur;
+      if (!p) return Promise.resolve(null);
+      return api(`/api/wiki/${p.id}`, { method: 'PUT', body: {
+        title: p.title, category: p.category, body: p.body, portrait: p.portrait || '',
+        fields: p.fields || {}, tags: p.tagsText ?? p.tags ?? [], parent_id: p.parent_id ?? null } });
+    },
+    onSaved: (res, latest) => { if (res) wikiListeners.saved.forEach(fn => fn(res, latest)); },
+    onError: e => wikiListeners.error.forEach(fn => fn(e)),
+  });
+  return wikiSaver;
+}
+/** Save the open wiki page after typing pauses. */
+export const scheduleWikiSave = () => pageSaver().schedule();
+/** Save `page` (default: the open page) now; resolves once it's stored. */
+export const saveWikiNow = page => pageSaver().flush(page);
+
+/** Upload an image file for the wiki. Resolves with { file, name, bytes }; the file name goes in the page text. */
+export async function uploadImage(file) {
+  const r = await fetch(`/api/wiki/images?name=${encodeURIComponent(file.name || '')}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file });
+  const data = await r.json().catch(() => null);
+  if (!r.ok) throw new Error((data && data.error) || r.statusText);
+  return data;
+}

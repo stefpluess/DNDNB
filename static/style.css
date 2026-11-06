@@ -3,40 +3,52 @@
      Combat    library | tracker | inspector + roll log
      Party     characters | sheet editor | computed stats
      Bestiary  creatures | creature editor | live stat block
-   Sections below follow that order: tokens, base, controls, header, frames, then each view. */
+     Wiki      categories and pages | page or editor | links and page info
+   Sections below follow that order: tokens, base, controls, header, frames, then each view.
+   Colors only come from the tokens; every token has a dark-mode value. */
 
 /* ---------- tokens ---------- */
 :root{
   --bg:#e6eded; --surface:#f6f9f9; --surface-2:#dbe5e5; --ink:#15232a; --muted:#566a70; --line:#c3d0d1;
   --accent:#1b6670; --accent-ink:#ffffff; --pc:#2c5ca6; --foe:#a3302c; --ally:#7a5917;
   --ok:#2c8547; --warn:#a9790a; --bad:#b02d29; --temp:#3f86b5; --crit:#a9790a;
+  --shadow:rgb(21 35 42 / .28); --backdrop:rgb(21 35 42 / .35);
+  --viewer:#0b1113; --viewer-ink:#e2ebeb;   /* the full-screen image viewer: dark in both themes */
   --display:"Alegreya SC",Georgia,serif; --body:"Alegreya Sans","Segoe UI",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --radius:6px; --radius-lg:8px;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#0e1517; --surface:#162124; --surface-2:#1e2c30; --ink:#e2ebeb; --muted:#8ea2a5; --line:#2b3c40;
   --accent:#5dbabd; --accent-ink:#0a1315; --pc:#7ea8ea; --foe:#ec7a74; --ally:#d8b45e;
-  --ok:#5bc27a; --warn:#e2b443; --bad:#ec6660; --temp:#6fb3e0; --crit:#e2b443; color-scheme:dark}}
+  --ok:#5bc27a; --warn:#e2b443; --bad:#ec6660; --temp:#6fb3e0; --crit:#e2b443;
+  --shadow:rgb(0 0 0 / .55); --backdrop:rgb(0 0 0 / .55); color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#0e1517; --surface:#162124; --surface-2:#1e2c30; --ink:#e2ebeb; --muted:#8ea2a5; --line:#2b3c40;
   --accent:#5dbabd; --accent-ink:#0a1315; --pc:#7ea8ea; --foe:#ec7a74; --ally:#d8b45e;
-  --ok:#5bc27a; --warn:#e2b443; --bad:#ec6660; --temp:#6fb3e0; --crit:#e2b443; color-scheme:dark}
+  --ok:#5bc27a; --warn:#e2b443; --bad:#ec6660; --temp:#6fb3e0; --crit:#e2b443;
+  --shadow:rgb(0 0 0 / .55); --backdrop:rgb(0 0 0 / .55); color-scheme:dark}
 
 /* ---------- base ---------- */
 *{box-sizing:border-box}
 html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.4;display:flex;flex-direction:column;overflow:hidden}
-button,input,select,textarea{font:inherit;color:inherit}
+/* lining figures: Alegreya's default old-style digits make a 0 look like the letter o in number fields */
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.4;font-variant-numeric:lining-nums;display:flex;flex-direction:column;overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit;font-variant-numeric:inherit}
 button{cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 [hidden]{display:none!important}
 h1,h2,h3,h4{margin:0}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .hint{margin:0;font-size:.82rem;color:var(--muted)}
-.warn{border:1px solid var(--warn);color:var(--warn);border-radius:6px;padding:6px 10px;font-size:.88rem;margin:0}
+.warn{border:1px solid var(--warn);color:var(--warn);border-radius:var(--radius);padding:6px 10px;font-size:.88rem;margin:0}
+.dis{color:var(--bad);font-size:.72rem;font-weight:700}
 kbd{font-family:var(--mono);font-size:.75rem;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px}
 
+/* headings use the display face; anything small inside them (hints, labels, buttons) stays in the body face */
+.sec h3 :is(.hint,label,.btn,.link),.blk h4 :is(.hint,label,.btn,.link),.loghead .link{font-family:var(--body);font-weight:400;letter-spacing:0;text-transform:none}
+
 /* ---------- controls ---------- */
-.btn{border:1px solid var(--line);background:var(--surface-2);border-radius:6px;padding:7px 14px;font-weight:500;white-space:nowrap}
+.btn{border:1px solid var(--line);background:var(--surface-2);border-radius:var(--radius);padding:7px 14px;font-weight:500;white-space:nowrap}
 .btn:hover{border-color:var(--muted)}
 .btn:disabled{opacity:.4;cursor:default}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
@@ -46,7 +58,7 @@ kbd{font-family:var(--mono);font-size:.75rem;border:1px solid var(--line);border
 .btn.roll{font-family:var(--mono);font-size:.85rem;padding:3px 9px;font-weight:600}
 .link{background:none;border:0;color:var(--accent);padding:0;font-size:.88rem;font-family:var(--body);letter-spacing:0}
 .link:disabled{opacity:.35;cursor:default}
-.field{border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:6px 8px;min-width:0}
+.field{border:1px solid var(--line);background:var(--bg);border-radius:var(--radius);padding:6px 8px;min-width:0}
 .field:focus{border-color:var(--accent)}
 .field.tiny{width:3.4rem;padding:3px 6px}
 .field.wide{width:100%}
@@ -58,12 +70,31 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .line{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .line .field{flex:1 1 4rem}
 .acts{display:flex;gap:8px;justify-content:flex-end}
+.spacer{flex:1}
 .tabs{display:flex;gap:2px}
-.views button,.tabs button{background:none;border:1px solid transparent;border-radius:6px;padding:5px 14px;color:var(--muted);font-weight:500}
+.views button,.tabs button{background:none;border:1px solid transparent;border-radius:var(--radius);padding:5px 14px;color:var(--muted);font-weight:500}
+.views button:hover,.tabs button:hover{color:var(--ink)}
 .views button.on,.tabs button.on{background:var(--surface-2);border-color:var(--line);color:var(--ink)}
 .tabs button{padding:4px 10px;font-size:.9rem}
-#libTabs{flex-wrap:wrap}
-#libTabs button{padding:4px 7px;flex:1 1 auto}
+.checks{display:flex;flex-wrap:wrap;gap:6px 16px}
+.checks label{display:flex;gap:6px;align-items:center;font-size:.92rem}
+.checks label.grow{flex:1}
+.checks label.grow .field{flex:1}
+
+/* tags, chips and pips: the small status marks used in every view */
+.tag{flex:none;font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700;padding:0 6px;border-radius:4px;border:1px solid currentColor}
+.tag-s{font-size:.72rem;border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-left:4px}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{border:1px solid var(--line);background:var(--surface-2);border-radius:999px;padding:0 9px;font-size:.8rem;display:inline-flex;gap:5px;align-items:center;line-height:1.6}
+button.chip:hover{border-color:var(--bad)}
+.chip span{color:var(--muted)}
+.chip b{font-family:var(--mono);font-weight:600;font-size:.74rem}
+.chip .src{color:var(--muted);font-size:.72rem}
+.chip.conc{border-color:var(--accent);color:var(--accent)}
+.chip.exh{border-color:var(--warn);color:var(--warn)}
+.pips{display:flex;gap:5px;flex-wrap:wrap}
+.pip{width:18px;height:18px;border-radius:50%;border:2px solid var(--accent);background:var(--accent);padding:0}
+.pip.spent{background:transparent;border-color:var(--line)}
 
 /* ---------- header ---------- */
 .top{display:flex;align-items:center;gap:24px;padding:8px 20px;background:var(--surface);border-bottom:1px solid var(--line);flex:none}
@@ -77,10 +108,11 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .combat{grid-template-columns:300px minmax(0,1fr) 420px}
 .party{grid-template-columns:240px minmax(0,1fr) 380px}
 .bestiary{grid-template-columns:240px minmax(0,1fr) 420px}
+.wiki{flex:1;min-height:0;display:grid;grid-template-columns:260px minmax(0,1fr) 300px}
 .panel-col{background:var(--surface);min-height:0;display:flex;flex-direction:column}
 .library,.charlist{border-right:1px solid var(--line)}
 .inspector,.derived{border-left:1px solid var(--line)}
-.empty-list{color:var(--muted);text-align:center;padding:40px 16px;border:1px dashed var(--line);border-radius:8px}
+.empty-list{color:var(--muted);text-align:center;padding:40px 16px;border:1px dashed var(--line);border-radius:var(--radius-lg)}
 
 /* search results (library, item search, copy-a-monster) */
 .search{width:100%}
@@ -90,32 +122,56 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .results .r-main{flex:1;min-width:0;background:none;border:0;text-align:left;padding:0}
 .results .r-name{display:block;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .results .r-meta{display:block;font-size:.8rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.results .add{flex:none;width:28px;height:28px;border-radius:6px;border:1px solid var(--line);background:var(--surface-2);font-weight:700;color:var(--accent)}
+.results .add{flex:none;width:28px;height:28px;border-radius:var(--radius);border:1px solid var(--line);background:var(--surface-2);font-weight:700;color:var(--accent)}
 .results .add:hover{border-color:var(--accent)}
 .results .add.del{color:var(--bad)}
 .results .add.del:hover{border-color:var(--bad)}
 .results .empty{display:block;border:0;color:var(--muted);padding:16px 4px;font-size:.9rem}
 .itemsearch{position:relative}
-.itemsearch .results{position:absolute;inset:100% 0 auto;z-index:4;background:var(--surface);border:1px solid var(--line);border-radius:6px;max-height:340px;box-shadow:0 10px 30px -12px rgba(0,0,0,.35)}
+.itemsearch .results{position:absolute;inset:100% 0 auto;z-index:4;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);max-height:340px;box-shadow:0 10px 30px -12px var(--shadow)}
 
 /* ---------- combat: library ---------- */
 .library{padding:12px;gap:8px}
+#libTabs{display:grid;grid-template-columns:repeat(5,auto);justify-content:space-between}
+#libTabs button{padding:4px 7px}
 .libopts{display:flex;gap:14px;align-items:center;font-size:.88rem;color:var(--muted)}
 .libopts label{display:flex;gap:6px;align-items:center}
+.surprise{display:flex;gap:6px;align-items:center;font-size:.82rem;color:var(--muted);margin:4px 0}
+.savefight{display:flex;gap:6px;padding:6px 0}
+.savefight .field{flex:1;min-width:0}
 
 /* ---------- combat: tracker ---------- */
 .tracker{min-height:0;display:flex;flex-direction:column;padding:14px 20px;gap:12px;overflow-y:auto}
 .turnbar{display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 .turnbar .primary{padding:9px 22px}
-.round{display:flex;flex-direction:column;align-items:center;min-width:3.8rem;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+.round{display:flex;flex-direction:column;align-items:center;min-width:3.8rem;padding:4px 8px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
 .round small{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 .round b{font-family:var(--mono);font-size:1.6rem;line-height:1}
 .now{flex:1;min-width:0}
 .now h1{font-family:var(--display);font-weight:700;font-size:1.6rem;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .now p{margin:2px 0 0;color:var(--muted);font-size:.9rem}
 
+/* the difficulty line, saving throw prompts and the area damage bar sit above the list */
+.diffline{margin:0;font-size:.9rem;border-left:4px solid var(--line);padding:2px 10px}
+.diffline.r-low{border-left-color:var(--ok)}
+.diffline.r-moderate{border-left-color:var(--warn)}
+.diffline.r-high,.diffline.r-abovehigh{border-left-color:var(--bad)}
+.prompts{display:grid;gap:4px}
+.prompt{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border:1px solid var(--warn);border-left-width:4px;border-radius:var(--radius);background:var(--surface);padding:6px 10px;font-size:.92rem}
+.prompt>span{flex:1;min-width:12rem}
+.groupbar{border:1px solid var(--bad);border-radius:var(--radius-lg);background:var(--surface);padding:8px 12px;display:grid;gap:6px}
+.gb-head{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.gb-head #gAmt{width:11rem;font-family:var(--mono)}
+.gb-list{display:grid;gap:4px}
+.gb-t{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,9rem) 8.5rem 5.5rem auto;gap:8px;align-items:center;font-size:.9rem}
+.gb-t .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gb-t label{display:flex;gap:4px;align-items:center}
+.gb-note{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gb-n{font-family:var(--mono);font-size:.85rem;color:var(--bad)}
+
+/* combatant rows: initiative | name, marks and conditions | AC | HP | quick damage */
 .list{display:flex;flex-direction:column;gap:6px}
-.cb{display:grid;grid-template-columns:3.2rem minmax(0,1fr) 2.8rem 9.5rem 11rem;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+.cb{display:grid;grid-template-columns:3.2rem minmax(0,1fr) 2.8rem 9.5rem 11rem;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:8px 12px;cursor:pointer}
 .cb:hover{border-color:var(--muted)}
 .cb.sel{border-color:var(--ink)}
 .cb.is-active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 6px 18px -10px var(--accent)}
@@ -125,52 +181,32 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .cb.is-dead .tag{color:var(--bad)}
 .cb.is-done{background:var(--surface-2)}
 .cb.is-done .nm{color:var(--muted)}
+.cb .init{width:100%;text-align:center;font-family:var(--mono);font-weight:600;font-size:1.2rem;padding:5px 2px}
+.cb.is-active .init{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.cb .ac.up b{color:var(--accent)}
+.who{min-width:0;display:flex;flex-direction:column;gap:4px}
+/* the name stays next to its checkbox (shortened with … only when it can't fit alone); the tags wrap below it */
+.who .top-line{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;min-width:0}
+.who .nmwrap{display:flex;align-items:center;gap:8px;min-width:0;max-width:100%}
+.who .nm{min-width:0;font-weight:700;font-size:1.08rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pick{flex:none;margin:0;accent-color:var(--bad)}
+.k-pc .tag{color:var(--pc)}
+.k-foe .tag{color:var(--foe)}
+.k-ally .tag{color:var(--ally)}
 .turn{flex:none;font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700;padding:0 6px;border-radius:4px}
 .turn.now{background:var(--accent);color:var(--accent-ink)}
 .turn.done{color:var(--muted);border:1px solid var(--line)}
-.rx{flex:none;font:600 .7rem/1.5 var(--body);padding:0 6px;border-radius:4px;border:1px solid var(--ok);color:var(--ok);background:none;cursor:pointer}
-.insp{flex:none;font:600 .7rem/1.5 var(--body);padding:0 6px;border-radius:4px;border:1px dashed var(--line);color:var(--muted);background:none;cursor:pointer}
-.insp.on{border:1px solid var(--warn);color:var(--warn)}
-.surprise{display:flex;gap:6px;align-items:center;font-size:.82rem;color:var(--muted);margin:4px 0}
-.rx.used{border-color:var(--line);color:var(--muted);text-decoration:line-through}
 .resrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:2px 0}
+.rx,.insp{flex:none;font:600 .7rem/1.5 var(--body);padding:0 6px;border-radius:4px;background:none;cursor:pointer}
+.rx{border:1px solid var(--ok);color:var(--ok)}
+.rx.used{border-color:var(--line);color:var(--muted);text-decoration:line-through}
+.insp{border:1px dashed var(--line);color:var(--muted)}
+.insp.on{border:1px solid var(--warn);color:var(--warn)}
 .legmini{display:inline-flex;gap:5px;align-items:center;flex:none}
 .legmini small{font-size:.72rem;color:var(--muted)}
 .legmini .pips{gap:3px}
 .legmini .pip{width:.7rem;height:.7rem}
 .spent{flex:none;font-size:.72rem;color:var(--bad);white-space:nowrap}
-.atkres{border:1px solid var(--line);border-left:4px solid var(--muted);border-radius:6px;padding:6px 10px;margin:6px 0;display:grid;gap:6px}
-.atkres p{margin:0}
-.atkres.hit{border-left-color:var(--bad)}
-.atkhint{color:var(--warn);margin:2px 0}
-.resline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0}
-.resline>span:first-child{min-width:10rem;font-weight:600;font-size:.9rem}
-.multi summary{cursor:pointer;font-weight:600}
-.multi .checks{max-height:14rem;overflow:auto;padding:4px 0}
-.features{list-style:none;padding:0;margin:0;display:grid;gap:6px}
-.features li{font-size:.88rem}
-.features li.later{opacity:.5}
-.features .ftext{display:block;color:var(--muted)}
-.tag-s{font-size:.72rem;border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-left:4px}
-.dis{color:var(--bad);font-size:.72rem;font-weight:700}
-.cb .ac.up b{color:var(--accent)}
-.chip .src{color:var(--muted);font-size:.72rem}
-.cb .init{width:100%;text-align:center;font-family:var(--mono);font-weight:600;font-size:1.2rem;padding:5px 2px}
-.cb.is-active .init{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
-.who{min-width:0;display:flex;flex-direction:column;gap:4px}
-.who .top-line{display:flex;align-items:baseline;gap:8px;min-width:0}
-.who .nm{min-width:3rem;font-weight:700;font-size:1.08rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tag{flex:none;font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;font-weight:700;padding:0 6px;border-radius:4px;border:1px solid currentColor}
-.k-pc .tag{color:var(--pc)}
-.k-foe .tag{color:var(--foe)}
-.k-ally .tag{color:var(--ally)}
-.chips{display:flex;flex-wrap:wrap;gap:4px}
-.chip{border:1px solid var(--line);background:var(--surface-2);border-radius:999px;padding:0 9px;font-size:.8rem;display:inline-flex;gap:5px;align-items:center;line-height:1.6}
-.chip:hover{border-color:var(--bad)}
-.chip span{color:var(--muted)}
-.chip b{font-family:var(--mono);font-weight:600;font-size:.74rem}
-.chip.conc{border-color:var(--accent);color:var(--accent)}
-.chip.exh{border-color:var(--warn);color:var(--warn)}
 .ac{display:flex;flex-direction:column;align-items:center;justify-content:center;width:2.7rem;height:2.9rem;border:1.5px solid var(--line);border-radius:6px 6px 14px 14px;font-family:var(--mono)}
 .ac b{font-size:1rem;line-height:1}
 .ac small{font-size:.58rem;letter-spacing:.1em;color:var(--muted)}
@@ -188,47 +224,24 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .quick .field{width:5.2rem;text-align:center;font-family:var(--mono)}
 .quick .btn{padding:4px 8px;font-weight:700}
 
-.quickadd{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--surface)}
+/* below the list: add a custom combatant, then the tool row */
+.quickadd{border:1px solid var(--line);border-radius:var(--radius-lg);padding:8px 12px;background:var(--surface)}
 .quickadd summary{cursor:pointer;color:var(--muted)}
-.addgrid{display:grid;grid-template-columns:2fr .7fr .9fr .7fr .7fr 1fr .7fr auto;gap:8px;align-items:end;margin-top:10px}
-.addgrid label{display:flex;flex-direction:column;font-size:.75rem;color:var(--muted);gap:3px;min-width:0}
-.addgrid .field{width:100%;color:var(--ink)}
-.diffline{margin:0 0 8px;font-size:.9rem;border-left:4px solid var(--line);padding:2px 10px}
-.diffline.r-low{border-left-color:var(--ok)}
-.diffline.r-moderate{border-left-color:var(--warn)}
-.diffline.r-high,.diffline.r-abovehigh{border-left-color:var(--bad)}
-.savefight{display:flex;gap:6px;padding:6px 0}
-.savefight .field{flex:1;min-width:0}
-.summary{border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);padding:18px 22px;width:min(440px,92vw)}
-.summary::backdrop{background:rgb(0 0 0 / .35)}
-.summary h2{margin:0 0 4px}
+.addgrid{display:grid;grid-template-columns:minmax(6rem,2fr) repeat(7,minmax(0,1fr)) auto;gap:8px;align-items:end;margin-top:10px}
+.addgrid label{display:flex;flex-direction:column;font-size:.75rem;color:var(--muted);gap:3px;min-width:0;white-space:nowrap}
+.addgrid .field{width:100%;height:2.1rem;color:var(--ink);font-size:.92rem}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:auto;padding-top:8px}
+.tools label{display:flex;gap:6px;align-items:center;font-size:.88rem;color:var(--muted)}
+.keys{color:var(--muted);font-size:.82rem}
+
+/* the end-of-combat summary */
+.summary{border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);padding:18px 22px;width:min(440px,92vw);box-shadow:0 20px 50px -20px var(--shadow)}
+.summary::backdrop{background:var(--backdrop)}
+.summary h2{margin:0 0 4px;font-family:var(--display)}
 .summary h4{margin:14px 0 4px}
 .summary ul{margin:0;padding-left:1.2rem}
 .summary .xp{margin:8px 0 0}
 .summary .line{margin-top:16px}
-.summary .spacer{flex:1}
-.prompts{display:grid;gap:4px;margin-bottom:8px}
-.prompt{display:flex;gap:8px;align-items:center;flex-wrap:wrap;border:1px solid var(--warn);border-left-width:4px;border-radius:6px;background:var(--surface);padding:6px 10px;font-size:.92rem}
-.prompt>span{flex:1;min-width:12rem}
-.condmore{margin:4px 0}
-.condmore summary{cursor:pointer}
-.condmore .line{margin:6px 0}
-.groupbar{border:1px solid var(--bad);border-radius:8px;background:var(--surface);padding:8px 12px;margin-bottom:8px;display:grid;gap:6px}
-.gb-head{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.gb-head #gAmt{width:11rem;font-family:var(--mono)}
-.gb-head .spacer{flex:1}
-.gb-list{display:grid;gap:4px}
-.gb-t{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,9rem) 8.5rem 5.5rem auto;gap:8px;align-items:center;font-size:.9rem}
-.gb-note{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.defenses{margin:4px 0}
-.gb-t .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.gb-t label{display:flex;gap:4px;align-items:center}
-.gb-n{font-family:var(--mono);font-size:.85rem;color:var(--bad)}
-.pick{flex:none;margin:0;accent-color:var(--bad)}
-.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:auto;padding-top:8px}
-.tools .spacer{flex:1}
-.tools label{display:flex;gap:6px;align-items:center;font-size:.88rem;color:var(--muted)}
-.keys{color:var(--muted);font-size:.82rem}
 
 /* ---------- combat: inspector ---------- */
 .inspect{flex:1;min-height:0;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:16px}
@@ -236,14 +249,17 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .ins-head h2{font-family:var(--display);font-weight:700;font-size:1.45rem;line-height:1.15}
 .ins-head p{margin:0;color:var(--muted);font-style:italic}
 .blk{display:flex;flex-direction:column;gap:8px}
-.blk h4{font-family:var(--display);font-weight:500;font-size:.95rem;letter-spacing:.06em;color:var(--muted);display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--line);padding-bottom:3px}
+.blk h4{font-family:var(--display);font-weight:500;font-size:.95rem;letter-spacing:.06em;color:var(--muted);display:flex;justify-content:space-between;align-items:baseline;gap:8px;border-bottom:1px solid var(--line);padding-bottom:3px}
 .bigstat{display:flex;gap:18px;align-items:baseline}
 .bigstat .v{font-family:var(--mono);font-size:1.6rem;font-weight:600}
 .bigstat .v small{font-size:1rem;color:var(--muted)}
 .bigstat .v.tmp{color:var(--temp)}
-.pips{display:flex;gap:5px;flex-wrap:wrap}
-.pip{width:18px;height:18px;border-radius:50%;border:2px solid var(--accent);background:var(--accent);padding:0}
-.pip.spent{background:transparent;border-color:var(--line)}
+.defenses{margin:4px 0}
+.resline{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:4px 0}
+.resline>span:first-child{min-width:10rem;font-weight:600;font-size:.9rem}
+.condmore{margin:4px 0}
+.condmore summary{cursor:pointer}
+.condmore .line{margin:6px 0}
 .slot{display:flex;align-items:center;gap:10px}
 .lv{font-family:var(--mono);font-size:.78rem;color:var(--muted);width:2.2rem}
 .slotedit{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:4px}
@@ -255,6 +271,11 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .ds .pip.on{background:var(--ok)}
 .ds .f .pip{border-color:var(--bad)}
 .ds .f .pip.on{background:var(--bad)}
+/* an attack against a target: its result, with what can be added on a hit */
+.atkres{border:1px solid var(--line);border-left:4px solid var(--muted);border-radius:var(--radius);padding:6px 10px;margin:6px 0;display:grid;gap:6px}
+.atkres p{margin:0}
+.atkres.hit{border-left-color:var(--bad)}
+.atkhint{color:var(--warn);margin:2px 0}
 
 /* ---------- stat blocks (inspector and Bestiary preview) ---------- */
 .statblock{display:flex;flex-direction:column;gap:10px}
@@ -274,7 +295,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .prose ul{margin:0 0 8px;padding-left:1.2em;font-size:.93rem}
 .prose li{margin:0 0 3px}
 .feat .prose p{font-size:.92rem;margin:0 0 4px}
-pre.tbl{font-family:var(--mono);font-size:.75rem;overflow-x:auto;background:var(--surface-2);padding:8px;border-radius:6px;margin:0 0 8px}
+pre.tbl{font-family:var(--mono);font-size:.75rem;overflow-x:auto;background:var(--surface-2);padding:8px;border-radius:var(--radius);margin:0 0 8px}
 
 /* ---------- combat: roll log ---------- */
 .logbox{flex:none;height:34%;min-height:180px;border-top:1px solid var(--line);display:flex;flex-direction:column;padding:10px 18px 12px;gap:6px;background:var(--surface-2)}
@@ -292,38 +313,36 @@ pre.tbl{font-family:var(--mono);font-size:.75rem;overflow-x:auto;background:var(
 
 /* ---------- party and bestiary: list column and editor ---------- */
 .charlist{padding:12px;gap:10px}
-.charlist ul{list-style:none;margin:0;padding:0;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
-.charlist li button{width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:6px;padding:7px 10px}
+.charlist ul{list-style:none;margin:0;padding:0;overflow-y:auto;flex:1;min-height:0;display:flex;flex-direction:column;gap:2px}
+.charlist li button{width:100%;text-align:left;background:none;border:1px solid transparent;border-radius:var(--radius);padding:7px 10px}
+.charlist li button:hover{border-color:var(--line)}
 .charlist li button.on{background:var(--surface-2);border-color:var(--line)}
 .charlist li b{display:block}
 .charlist li span{font-size:.82rem;color:var(--muted)}
 .sheet{min-height:0;overflow-y:auto;padding:18px 24px 40px;display:flex;flex-direction:column;gap:20px}
 .sheet .empty-list{margin-top:20px}
 .sec{display:flex;flex-direction:column;gap:10px}
-.sec h3{font-family:var(--display);font-weight:700;font-size:1.1rem;display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--line);padding-bottom:4px}
-.sec h3 .btn{font-family:var(--body);letter-spacing:0}
+.sec h3{font-family:var(--display);font-weight:700;font-size:1.1rem;display:flex;justify-content:space-between;align-items:baseline;gap:8px;border-bottom:1px solid var(--line);padding-bottom:4px}
 .grid{display:grid;gap:8px 12px}
 .g4{grid-template-columns:repeat(4,minmax(0,1fr))}
 .g6{grid-template-columns:repeat(6,minmax(0,1fr))}
 .g-wide{grid-column:span 2}
 .lbl-f{display:flex;flex-direction:column;font-size:.75rem;color:var(--muted);gap:3px;min-width:0}
 .lbl-f .field{color:var(--ink);font-size:.95rem;width:100%}
+.multi summary{cursor:pointer;font-weight:600}
+.multi .checks{max-height:14rem;overflow:auto;padding:4px 0}
 .scores{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}
-.score{display:flex;flex-direction:column;align-items:center;gap:4px;border:1px solid var(--line);border-radius:8px;padding:8px 6px;background:var(--surface)}
+.score{display:flex;flex-direction:column;align-items:center;gap:4px;border:1px solid var(--line);border-radius:var(--radius-lg);padding:8px 6px;background:var(--surface)}
 .score small{font-size:.7rem;font-weight:700;letter-spacing:.1em;color:var(--muted)}
 .score .mod{font-family:var(--mono);font-weight:600;font-size:1.4rem;line-height:1}
 .score .field{width:3.6rem;text-align:center;font-family:var(--mono);padding:3px}
 .score .note{font-size:.7rem;color:var(--accent);text-align:center}
 .score .hint{display:flex;gap:4px;align-items:center;font-size:.75rem}
-.checks{display:flex;flex-wrap:wrap;gap:6px 16px}
-.checks label{display:flex;gap:6px;align-items:center;font-size:.92rem}
-.checks label.grow{flex:1}
-.checks label.grow .field{flex:1}
 .skillgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px 16px}
 .skillgrid label{display:flex;gap:6px;align-items:center;font-size:.9rem}
 .skillgrid .ab{color:var(--muted);font-size:.75rem;margin-left:auto}
 
-/* inventory table */
+/* inventory and spell tables */
 .inv{width:100%;border-collapse:collapse;font-size:.92rem}
 .inv th{text-align:left;font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:4px 6px;border-bottom:1px solid var(--line)}
 .inv td{padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
@@ -338,7 +357,7 @@ pre.tbl{font-family:var(--mono);font-size:.75rem;overflow-x:auto;background:var(
 /* bestiary editor rows */
 .g-act{grid-template-columns:2fr 1.2fr 1fr 1fr 1fr}
 .g-atk{grid-template-columns:1fr .8fr 1fr 1fr 1.1fr 1fr 1.1fr}
-.mrow{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--surface)}
+.mrow{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line);border-radius:var(--radius-lg);padding:10px 12px;background:var(--surface)}
 .mrow .line .field{flex:1}
 .mrow textarea.field{min-height:2.6rem}
 
@@ -352,7 +371,7 @@ pre.tbl{font-family:var(--mono);font-size:.75rem;overflow-x:auto;background:var(
 .breakdown li{display:flex;justify-content:space-between;gap:8px}
 .breakdown .mono{color:var(--muted)}
 .tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
-.tile{border:1px solid var(--line);border-radius:6px;padding:5px;text-align:center}
+.tile{border:1px solid var(--line);border-radius:var(--radius);padding:5px;text-align:center}
 .tile b{display:block;font-family:var(--mono);font-size:1.15rem}
 .tile small{font-size:.68rem;color:var(--muted);letter-spacing:.06em}
 .atk{display:flex;flex-direction:column;gap:2px;padding:6px 0;border-bottom:1px solid var(--line)}
@@ -367,17 +386,159 @@ pre.tbl{font-family:var(--mono);font-size:.75rem;overflow-x:auto;background:var(
 .kv .link:hover{text-decoration:underline}
 .kv .p{font-weight:700}
 .kv .p .link{color:var(--accent);font-weight:700}
+.features{list-style:none;padding:0;margin:0;display:grid;gap:6px}
+.features li{font-size:.88rem}
+.features li.later{opacity:.5}
+.features .ftext{display:block;color:var(--muted)}
+
+/* ---------- wiki ---------- */
+.wikicats{display:flex;flex-direction:column;gap:1px;flex:none}
+.wikicats button{display:flex;justify-content:space-between;align-items:baseline;gap:8px;background:none;border:1px solid transparent;border-radius:var(--radius);padding:4px 10px;text-align:left;color:var(--muted)}
+.wikicats button:hover{color:var(--ink)}
+.wikicats button.on{background:var(--surface-2);border-color:var(--line);color:var(--ink);font-weight:700}
+.wikicats small{font-family:var(--mono);font-size:.75rem}
+.wikicats .todo small{color:var(--warn);font-weight:600}
+.wikinav #wikiList{border-top:1px solid var(--line);padding-top:6px}
+.wikinav #wikiList span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wikitrash{align-self:flex-start;color:var(--muted)}
+.wikitrash.on{color:var(--ink);font-weight:700}
+.wikipage{gap:14px}
+.wikihead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.wikihead .titles{display:flex;flex-direction:column;gap:2px;min-width:0}
+.wikihead .titles.grow{flex:1;gap:8px}
+.wikihead .titles>.link{align-self:flex-start;font-size:.82rem}
+.wikihead h1{font-family:var(--display);font-weight:700;font-size:1.9rem;line-height:1.15;overflow-wrap:anywhere}
+.wikihead .line{flex:none}
+.wikihead .wtitle{font-family:var(--display);font-weight:700;font-size:1.5rem;padding:4px 10px}
+.wikihead label.hint{display:flex;gap:8px;align-items:center}
+.wikihead label .field{width:auto}
+/* page text: comfortable reading width */
+.wikitext{max-width:46rem;font-size:1rem;line-height:1.55;overflow-wrap:break-word}
+.wikitext>:first-child{margin-top:0}
+.wikitext h2,.wikitext h3,.wikitext h4,.wikitext h5{font-family:var(--display);font-weight:700;margin:1.1em 0 .35em;line-height:1.2}
+.wikitext h2{font-size:1.4rem;border-bottom:1px solid var(--line);padding-bottom:3px}
+.wikitext h3{font-size:1.18rem}
+.wikitext h4,.wikitext h5{font-size:1.02rem;color:var(--muted)}
+.wikitext p,.wikitext ul,.wikitext ol,.wikitext table,.wikitext blockquote{margin:0 0 .8em}
+.wikitext ul,.wikitext ol{padding-left:1.4em}
+.wikitext li{margin:0 0 .2em}
+.wikitext li.task{list-style:none;margin-left:-1.2em}
+.wikitext li.task.done{color:var(--muted);text-decoration:line-through}
+.wikitext .box{font-family:var(--mono)}
+.wikitext blockquote{border-left:3px solid var(--accent);padding:2px 0 2px 12px;color:var(--muted);font-style:italic}
+.wikitext blockquote>:last-child{margin-bottom:0}
+.wikitext hr{border:0;border-top:1px solid var(--line);margin:1.2em 0}
+.wikitext code,.mdhelp code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border-radius:4px;padding:0 4px}
+.wikitext table{border-collapse:collapse;font-size:.93rem}
+.wikitext th,.wikitext td{border:1px solid var(--line);padding:4px 10px;text-align:left;vertical-align:top}
+.wikitext th{background:var(--surface-2);font-weight:700}
+.wikitext a{color:var(--accent)}
+/* wiki links: existing pages underlined lightly; missing ones dashed in the warning color */
+a.wl{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 40%,transparent)}
+a.wl:hover{border-bottom-color:var(--accent)}
+a.wl.missing{color:var(--warn);border-bottom:1px dashed var(--warn)}
+/* the editor: text and live preview side by side */
+.wikiedit{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;flex:1;min-height:24rem}
+.wikiedit .pane{position:relative;min-width:0;display:flex;flex-direction:column}
+.wikiedit textarea{flex:1;min-height:24rem;resize:none;font-family:var(--mono);font-size:.88rem;line-height:1.55;padding:10px 12px}
+.wikiedit .preview{border:1px dashed var(--line);border-radius:var(--radius);padding:10px 14px;max-width:none;min-height:24rem;overflow-y:auto}
+.suggest{position:absolute;z-index:5;list-style:none;margin:0;padding:4px 0;min-width:200px;max-width:320px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 10px 30px -12px var(--shadow)}
+.suggest li{padding:4px 12px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.92rem}
+.suggest li.on,.suggest li:hover{background:var(--surface-2)}
+.mdhelp{margin-top:-4px}
+.trashlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.trashlist li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
+.trashlist li>div{display:flex;flex-direction:column}
+.linklist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+
+/* images in pages: full width by default, medium, or small beside the text */
+.wikitext figure.wimg{margin:0 0 1em;display:flex;flex-direction:column;gap:4px;position:relative}
+.wikitext figure.wimg img{display:block;max-width:100%;max-height:70vh;width:auto;height:auto;object-fit:contain;border-radius:var(--radius);border:1px solid var(--line);cursor:zoom-in;background:var(--surface-2)}
+.wikitext figure.wimg.medium{max-width:24rem}
+.wikitext figure.wimg.small{float:right;clear:right;width:13rem;margin:0 0 .8em 1.2em}
+.wikitext figcaption{font-size:.84rem;color:var(--muted);font-style:italic}
+.wikitext img.inline{height:1.6em;width:auto;vertical-align:middle;border-radius:3px;cursor:zoom-in}
+.wikitext .imgrow{display:flex;gap:10px;align-items:flex-start;margin:0 0 1em}
+.wikitext .imgrow figure.wimg{flex:1 1 0;min-width:0;margin:0;float:none;width:auto}
+.wikitext h2,.wikitext h3,.wikitext hr,.wikitext table{clear:both}
+.wikitext::after{content:"";display:block;clear:both}
+.imgsizes{position:absolute;top:6px;left:6px;display:flex;gap:2px;opacity:0;transition:opacity .15s}
+figure.wimg:hover .imgsizes,figure.wimg:focus-within .imgsizes{opacity:1}
+.imgsizes button{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:4px;font-size:.72rem;padding:0 6px;line-height:1.6}
+.imgsizes button.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.wikipage.dropping .wikitext,.wikipage.dropping textarea{outline:2px dashed var(--accent);outline-offset:4px}
+/* portrait at the top of the info column, thumbnails in the page list */
+.portraitblk{display:flex;flex-direction:column;gap:6px}
+.portrait{display:block;padding:0;border:1px solid var(--line);border-radius:var(--radius-lg);background:var(--surface-2);overflow:hidden;cursor:zoom-in}
+.portrait img{display:block;width:100%;max-height:22rem;object-fit:cover}
+.portrait.empty{cursor:pointer;border-style:dashed;background:none;color:var(--muted);padding:18px 12px;text-align:center;display:flex;flex-direction:column;gap:4px;font-weight:600}
+.portrait.empty small{font-weight:400;font-size:.78rem}
+.portrait.empty:hover{color:var(--ink);border-color:var(--muted)}
+.wikinav #wikiList li button{display:flex;gap:10px;align-items:center}
+.wikinav #wikiList .txt{min-width:0;flex:1}
+.wikinav .thumb{flex:none;width:30px;height:30px;border-radius:50%;object-fit:cover;border:1px solid var(--line)}
+/* tags, the trail of pages a page sits inside, the info box, the page tree */
+.wikitags{flex:none}
+.wikitags h4{font-family:var(--display);font-weight:500;font-size:.85rem;letter-spacing:.06em;color:var(--muted);margin:2px 0 4px 10px}
+.wikitags .chips{max-height:7.5rem;overflow-y:auto;padding:0 4px}
+button.chip.wtag{color:var(--accent);background:none;cursor:pointer}
+button.chip.wtag:hover{border-color:var(--accent)}
+button.chip.wtag.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button.chip.wtag.on b{color:var(--accent-ink)}
+.wikihead .chips{margin-top:4px}
+.crumbs{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;font-size:.82rem}
+.trail{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;color:var(--muted)}
+.metarow{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.metarow label.grow{flex:1;min-width:12rem}
+.metarow label.grow .field{flex:1}
+.metarow #wikiParent{width:13rem}
+.blk>.link{align-self:flex-start}
+.infoedit{display:grid;grid-template-columns:repeat(auto-fill,minmax(10.5rem,1fr));gap:6px 12px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
+.infobox dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:0;font-size:.92rem}
+.infobox dt{color:var(--muted)}
+.infobox dd{margin:0;overflow-wrap:anywhere}
+.infobox dd:is(.v-alive,.v-friendly,.v-completed,.v-safe){color:var(--ok)}
+.infobox dd:is(.v-dead,.v-hostile,.v-failed,.v-deadly){color:var(--bad)}
+.infobox dd:is(.v-active,.v-missing,.v-dangerous,.v-risky){color:var(--warn)}
+/* every row keeps room for the fold arrow; pages inside another are indented one step per level */
+.wikinav #wikiList li{position:relative;padding-left:calc(14px + var(--depth,0) * 14px)}
+.wikinav #wikiList .fold{position:absolute;left:calc(var(--depth,0) * 14px);top:50%;transform:translateY(-50%);width:14px;height:24px;padding:0;border:0;background:none;color:var(--muted);font-size:.8rem;line-height:1}
+.wikinav #wikiList .fold:hover{color:var(--ink)}
+
+/* the full-screen viewer */
+.lightbox{width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0;background:var(--viewer);color:var(--viewer-ink);display:none;flex-direction:column}
+.lightbox[open]{display:flex}
+.lightbox::backdrop{background:var(--viewer)}
+.lb-bar{display:flex;gap:8px;align-items:center;padding:10px 16px;flex:none}
+.lb-bar .btn{background:transparent;color:var(--viewer-ink);border-color:color-mix(in srgb,var(--viewer-ink) 30%,transparent)}
+.lb-bar .btn:hover{border-color:var(--viewer-ink)}
+.lb-cap{font-style:italic}
+.lb-count{font-size:.85rem;opacity:.7}
+.lb-stage{flex:1;min-height:0;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:0 56px 16px}
+.lb-stage img{max-width:100%;max-height:100%;object-fit:contain;cursor:zoom-in;user-select:none;-webkit-user-drag:none}
+.lb-stage.zoomed{display:block;overflow:auto;padding:0;cursor:grab}
+.lb-stage.zoomed img{max-width:none;max-height:none;cursor:zoom-out}
+.lb-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:64px;border:0;border-radius:var(--radius);background:color-mix(in srgb,var(--viewer-ink) 10%,transparent);color:var(--viewer-ink);font-size:2rem;line-height:1}
+.lb-nav:hover{background:color-mix(in srgb,var(--viewer-ink) 22%,transparent)}
+.lb-nav.prev{left:6px}
+.lb-nav.next{right:6px}
+.lb-stage.zoomed .lb-nav{position:fixed}
 
 /* ---------- toast ---------- */
-#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);opacity:0;pointer-events:none;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;font-weight:500;max-width:560px;transition:.2s;z-index:20}
+#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);opacity:0;pointer-events:none;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:var(--radius-lg);font-weight:500;max-width:560px;box-shadow:0 10px 30px -12px var(--shadow);transition:.2s;z-index:20}
 #toast.show{opacity:1;transform:translate(-50%,0)}
 
 /* ---------- narrower desktop windows ---------- */
 @media (max-width:1280px){
-  .combat{grid-template-columns:260px minmax(0,1fr) 360px}
+  .combat{grid-template-columns:270px minmax(0,1fr) 350px}
   .party{grid-template-columns:200px minmax(0,1fr) 340px}
   .bestiary{grid-template-columns:200px minmax(0,1fr) 360px}
-  .cb{grid-template-columns:3rem minmax(0,1fr) 2.7rem 8rem 9.5rem}
+  .wiki{grid-template-columns:220px minmax(0,1fr) 250px}
+  #libTabs button{padding:4px 5px;font-size:.85rem}
+  .cb{grid-template-columns:2.8rem minmax(0,1fr) 2.7rem 7rem 8.6rem;gap:10px}
+  .quick .field{width:4.4rem}
+  .addgrid{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .addgrid .w2{grid-column:span 2}
   .g-atk{grid-template-columns:repeat(4,minmax(0,1fr))}
   .g6{grid-template-columns:repeat(3,minmax(0,1fr))}
 }

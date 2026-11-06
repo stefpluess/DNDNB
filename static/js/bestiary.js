@@ -183,8 +183,10 @@ async function onEditorAction(a, i) {
       await saveMonNow(idx);
       return addMonster(idx);
     case 'dup': {
-      await saveMonNow(idx);
-      const res = await api('/api/homebrew', { method: 'POST', body: { copy_of: idx } });
+      await saveMonNow(idx).catch(() => {});
+      let res;
+      try { res = await api('/api/homebrew', { method: 'POST', body: { copy_of: idx } }); }
+      catch (e) { return toast(e.message); }
       await loadMonList();
       return openMon(res.idx);
     }
@@ -217,7 +219,9 @@ export function initBestiary() {
   $('#monPreview').addEventListener('click', handleRollClick);
   $('#monList').addEventListener('click', e => { const b = e.target.closest('[data-mon]'); if (b) openMon(b.dataset.mon); });
   $('#newMon').onclick = async () => {
-    const res = await api('/api/homebrew', { method: 'POST', body: { name: 'New creature' } });
+    let res;
+    try { res = await api('/api/homebrew', { method: 'POST', body: { name: 'New creature' } }); }
+    catch (e) { return toast(`Could not create the creature: ${e.message}`); }
     await loadMonList();
     await openMon(res.idx);
     document.getElementById('m-name')?.select();
@@ -240,7 +244,9 @@ export function initBestiary() {
     if (!b) return;
     $('#copyResults').hidden = true;
     $('#copySearch').value = '';
-    const res = await api('/api/homebrew', { method: 'POST', body: { copy_of: b.dataset.copy } });
+    let res;
+    try { res = await api('/api/homebrew', { method: 'POST', body: { copy_of: b.dataset.copy } }); }
+    catch (e) { return toast(`Could not copy that monster: ${e.message}`); }
     await loadMonList();
     await openMon(res.idx);
     toast(`Copied ${res.data.name.replace(/ \(variant\)$/, '')}. Change whatever you like.`);
