@@ -3,6 +3,7 @@
 // Supported: # headings, paragraphs, **bold**, *italic*, `code`, - lists, 1. lists, - [ ] tasks, > quotes,
 // --- rules, | tables |, [text](https://...), wiki links [[Page title]] / [[Page title|shown text]] and uploaded
 // images ![Caption|size](file) (size: small, medium or full; a line of only images shows them as figures).
+// [[char:Mira]], [[monster:Goblin Warrior]] and [[fight:Goblin ambush]] link to the rest of the app.
 // Everything the DM typed is escaped; only the tags made here reach the page.
 
 import { esc } from './util.js';
@@ -32,7 +33,24 @@ function figure(file, alt, editable) {
 /** The form titles are compared in (as wiki.norm): case and extra spaces don't matter. */
 export const normTitle = t => String(t ?? '').split(/\s+/).filter(Boolean).join(' ').toLowerCase();
 
-function wikiLink(target, label, resolve) {
+// a link target naming something in the game (as wiki.REF): char:Mira, monster:Goblin Warrior, fight:Ambush
+const REF = /^(char|monster|fight)\s*:\s*(\S.*)$/i;
+export const REF_KINDS = { char: 'Character', monster: 'Creature', fight: 'Saved fight' };
+
+/** { kind, name } for "monster: Goblin Warrior", or null for a page title (as wiki.split_ref). */
+export function splitRef(target) {
+  const m = String(target ?? '').split(/\s+/).filter(Boolean).join(' ').match(REF);
+  return m ? { kind: m[1].toLowerCase(), name: m[2] } : null;
+}
+
+function wikiLink(target, label, { resolve, resolveRef }) {
+  const ref = splitRef(target);
+  if (ref) {
+    const hit = resolveRef(ref.kind, ref.name);
+    const what = REF_KINDS[ref.kind];
+    return `<a class="wl ref r-${ref.kind}${hit ? '' : ' missing'}" href="#" data-ref="${esc(`${ref.kind}:${ref.name}`)}" title="${esc(hit
+      ? `${what}: ${hit.title || ref.name}` : `No ${what.toLowerCase()} called "${ref.name}" in the app yet`)}">${esc(label || ref.name)}</a>`;
+  }
   const page = resolve(target);
   const text = esc(label || target);
   return page
@@ -41,13 +59,13 @@ function wikiLink(target, label, resolve) {
 }
 
 /** One line of text: links and code are set aside first so bold and italic never reach into them. */
-function inline(text, resolve) {
+function inline(text, ctx) {
   const slots = [];
   const keep = html => `\u0000${slots.push(html) - 1}\u0000`;
   const s = String(text)
     .replace(/`([^`\n]+)`/g, (_, c) => keep(`<code>${esc(c)}</code>`))
     .replace(IMAGE, (_, alt, file) => keep(`<img class="inline" src="${imageUrl(file)}" alt="${esc(imageAlt(alt).caption)}" loading="lazy" data-img="${file}">`))
-    .replace(WIKI, (_, target, label) => keep(wikiLink(target.trim(), label ? label.slice(1).trim() : '', resolve)))
+    .replace(WIKI, (_, target, label) => keep(wikiLink(target.trim(), label ? label.slice(1).trim() : '', ctx)))
     .replace(URL_LINK, (_, t, href) => keep(`<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(t)}</a>`));
   return esc(s)
     .replace(/\*\*(?!\s)(.+?)\*\*/g, '<b>$1</b>')
@@ -85,9 +103,9 @@ const startsBlock = (line, next) => IMAGE_LINE.test(line) || HEADING.test(line) 
  * A page's Markdown as HTML. resolve(title) returns the page ({ id }) a [[link]] points to, or null when
  * no page has that title yet (the link is shown as missing and creates the page when clicked).
  */
-export function renderMarkdown(text, resolve = () => null, { editable = false } = {}) {
+export function renderMarkdown(text, resolve = () => null, { editable = false, resolveRef = () => null } = {}) {
   const lines = String(text ?? '').replace(/\u0000/g, '').replace(/\r\n?/g, '\n').split('\n');
-  const inl = t => inline(t, resolve);
+  const inl = t => inline(t, { resolve, resolveRef });
   const out = [];
   let i = 0;
   while (i < lines.length) {
@@ -106,7 +124,7 @@ export function renderMarkdown(text, resolve = () => null, { editable = false } 
     if (QUOTE.test(line)) {
       const q = [];
       while (i < lines.length && QUOTE.test(lines[i])) q.push(lines[i++].replace(/^\s*>\s?/, ''));
-      out.push(`<blockquote>${renderMarkdown(q.join('\n'), resolve, { editable })}</blockquote>`); continue;
+      out.push(`<blockquote>${renderMarkdown(q.join('\n'), resolve, { editable, resolveRef })}</blockquote>`); continue;
     }
     if (BULLET.test(line) || NUMBER.test(line)) {
       const re = BULLET.test(line) ? BULLET : NUMBER, tag = re === BULLET ? 'ul' : 'ol';

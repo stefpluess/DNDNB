@@ -8,7 +8,7 @@ import { S, api, ctx } from './store.js';
 import { initCombat, showCombat, stepTurn, undo } from './tracker.js';
 import { logEntries } from './ui.js';
 import { $, toast } from './util.js';
-import { initWiki, showWiki } from './wiki.js';
+import { initWiki, openWikiPage, showWiki } from './wiki.js';
 
 async function loadState() {
   S.meta = await api('/api/meta');
@@ -66,6 +66,11 @@ async function boot() {
   registerView('party', showParty);
   registerView('bestiary', showBestiary);
   registerView('wiki', showWiki);
+  // "In the wiki" links on sheets and stat blocks open the page in the Wiki view
+  document.addEventListener('click', e => {
+    const a = e.target.closest('[data-wikipage]');
+    if (a) { e.preventDefault(); openWikiPage(+a.dataset.wikipage); }
+  });
   document.querySelector('.views').addEventListener('click', e => {
     const b = e.target.closest('[data-view]');
     if (b) switchView(b.dataset.view);

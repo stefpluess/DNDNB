@@ -86,3 +86,17 @@ test('changing a size, writing a new image, inserting on its own lines', () => {
   assert.deepEqual(insertBlock('a\n', 2, 'X'), { text: 'a\nX\n', caret: 4 });
   assert.deepEqual(insertBlock('', 0, 'X'), { text: 'X\n', caret: 2 });
 });
+
+// ---------- links to the game ----------
+
+test('char:, monster: and fight: links point at the app, not at pages', async () => {
+  const { splitRef } = await import('../static/js/markdown.js');
+  assert.deepEqual(splitRef(' Monster :  Goblin   Warrior'), { kind: 'monster', name: 'Goblin Warrior' });
+  assert.equal(splitRef('Charlotte: a story'), null);
+  const found = { 'char:mira': { title: 'Mira' } };
+  const html = renderMarkdown('[[char:mira]] and [[monster:Owlbear|the beast]]', () => null,
+    { resolveRef: (k, n) => found[`${k}:${normTitle(n)}`] || null });
+  assert.equal(html, '<p><a class="wl ref r-char" href="#" data-ref="char:mira" title="Character: Mira">mira</a> and '
+    + '<a class="wl ref r-monster missing" href="#" data-ref="monster:Owlbear" title="No creature called &quot;Owlbear&quot; in the app yet">the beast</a></p>');
+  assert.ok(!md('[[char:<b>x</b>]]').includes('<b>'));
+});

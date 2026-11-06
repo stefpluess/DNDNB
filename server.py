@@ -4,6 +4,7 @@
     python server.py --open     # also opens your browser
 """
 import argparse
+import datetime
 import json
 import mimetypes
 import os
@@ -31,10 +32,10 @@ class ApiError(Exception):
 
 
 class Raw:
-    """A handler's reply that isn't JSON (an image)."""
+    """A handler's reply that isn't JSON (an image, a download). filename: offered as a download."""
 
-    def __init__(self, data, mime, cache="no-store"):
-        self.data, self.mime, self.cache = data, mime, cache
+    def __init__(self, data, mime, cache="no-store", filename=None):
+        self.data, self.mime, self.cache, self.filename = data, mime, cache, filename
 
 
 # ---------- who may call the server ----------
@@ -336,6 +337,17 @@ def _wiki(fn, *args, **kw):
         raise ApiError(str(e), e.status)
 
 
+def _page(fn, *args, **kw):
+    """Like _wiki for functions that return a page: its links to characters, creatures and fights are resolved."""
+    try:
+        with db.campaign_session() as conn, db.srd_session() as srd:
+            page = fn(conn, *args, **kw)
+            page["refs"] = wiki.resolve_refs(conn, srd, page.get("refs") or [])
+            return page
+    except wiki.WikiError as e:
+        raise ApiError(str(e), e.status)
+
+
 def _page_fields(body):
     return {k: body[k] for k in ("title", "category", "body", "portrait", "fields", "tags", "parent_id") if k in body}
 
@@ -349,15 +361,15 @@ def search_wiki(_req, q):
 
 
 def get_wiki(_req, _q, pid):
-    return _wiki(wiki.get_page, int(pid))
+    return _page(wiki.get_page, int(pid))
 
 
 def create_wiki(req, _q):
-    return _wiki(wiki.create_page, **_page_fields(req.json_body() or {}))
+    return _page(wiki.create_page, **_page_fields(req.json_body() or {}))
 
 
 def update_wiki(req, _q, pid):
-    return _wiki(wiki.update_page, int(pid), **_page_fields(req.json_body() or {}))
+    return _page(wiki.update_page, int(pid), **_page_fields(req.json_body() or {}))
 
 
 def delete_wiki(_req, _q, pid):
@@ -369,7 +381,25 @@ def wiki_trash(_req, _q):
 
 
 def restore_wiki(_req, _q, pid):
-    return _wiki(wiki.restore_page, int(pid))
+    return _page(wiki.restore_page, int(pid))
+
+
+def wiki_mentions(_req, q):
+    """?kind=char|monster|fight&name=...: the pages that link to that character, creature or fight."""
+    return _wiki(wiki.mentions, q.get("kind", [""])[0], q.get("name", [""])[0])
+
+
+def wiki_gallery(_req, _q):
+    return _wiki(wiki.list_images)
+
+
+def delete_image(_req, _q, file):
+    return _wiki(wiki.delete_image, db.wiki_images_dir(), file)
+
+
+def export_wiki(_req, _q):
+    data = _wiki(wiki.export_zip, db.wiki_images_dir())
+    return Raw(data, "application/zip", filename=f"campaign-wiki-{datetime.date.today().isoformat()}.zip")
 
 
 def upload_image(req, q):
@@ -423,6 +453,10 @@ ROUTES = [
     ("POST", r"/api/wiki/(\d+)/restore", restore_wiki),
     ("POST", r"/api/wiki/images", upload_image),
     ("GET", r"/api/wiki/images/([\w.]+)", get_image),
+    ("DELETE", r"/api/wiki/images/([\w.]+)", delete_image),
+    ("GET", r"/api/wiki/gallery", wiki_gallery),
+    ("GET", r"/api/wiki/mentions", wiki_mentions),
+    ("GET", r"/api/wiki/export", export_wiki),
 ]
 
 
@@ -465,6 +499,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw.data)))
         self.send_header("Cache-Control", raw.cache)
         self.send_header("X-Content-Type-Options", "nosniff")
+        if raw.filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{raw.filename}"')
         self.end_headers()
         self.wfile.write(raw.data)
 
