@@ -318,6 +318,42 @@ export function deathSave(ctx, c, die) {
   return { total, outcome, pen, msgs, cls: die === 20 ? 'crit' : die === 1 ? 'fumble' : '' };
 }
 
+// ---------- attacks ----------
+
+/**
+ * An attack roll against a target's AC (2024): `dice` holds one d20, or two for Advantage/Disadvantage.
+ * A natural 20 always hits and is a critical hit; a natural 1 always misses.
+ * `pen` is subtracted from the total (Exhaustion, when the bonus doesn't already include it).
+ */
+export function attackOutcome({ dice, mode = 'normal', bonus = 0, pen = 0, ac }) {
+  const nat = mode === 'adv' ? Math.max(...dice) : mode === 'dis' ? Math.min(...dice) : dice[0];
+  const total = nat + bonus - pen;
+  const crit = nat === 20;
+  const hit = crit || (nat !== 1 && total >= ac);
+  return { nat, total, hit, crit };
+}
+
+const TARGET_ADV = { Blinded: 'Blinded', Paralyzed: 'Paralyzed', Petrified: 'Petrified', Restrained: 'Restrained', Stunned: 'Stunned', Unconscious: 'Unconscious' };
+/**
+ * Reminders for an attack from `atk` against `tgt` from their conditions (2024 rules). The DM still
+ * picks Advantage or Disadvantage, since range and senses aren't tracked. Returns [{ text, mode }].
+ */
+export function attackHints(atk, tgt) {
+  const out = [];
+  for (const x of tgt.conds) {
+    if (TARGET_ADV[x.n]) out.push({ text: `${x.n} target: attacks have Advantage`, mode: 'adv' });
+    if (x.n === 'Paralyzed' || x.n === 'Unconscious') out.push({ text: `${x.n} target: a hit from within 5 ft is a critical hit`, mode: null });
+    if (x.n === 'Prone') out.push({ text: 'Prone target: Advantage within 5 ft, Disadvantage farther away', mode: null });
+    if (x.n === 'Invisible') out.push({ text: 'Invisible target: attacks have Disadvantage', mode: 'dis' });
+  }
+  for (const x of atk.conds) {
+    if (['Blinded', 'Poisoned', 'Restrained', 'Prone'].includes(x.n)) out.push({ text: `${x.n} attacker: Disadvantage`, mode: 'dis' });
+    if (x.n === 'Frightened') out.push({ text: 'Frightened attacker: Disadvantage while the source is in sight', mode: 'dis' });
+    if (x.n === 'Invisible') out.push({ text: 'Invisible attacker: Advantage', mode: 'adv' });
+  }
+  return out;
+}
+
 // ---------- reactions and monster resources ----------
 //
 // c.res = { leg: { max, used } | null,        legendary actions, regained at the start of the monster's turn

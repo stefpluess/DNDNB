@@ -1,7 +1,7 @@
 // The Combat view: library (left), initiative tracker (middle), inspector and roll log (right).
 
 import * as R from './combat.js';
-import { d20, parseAmount, roll } from './dice.js';
+import { d20, doubleDice, parseAmount, roll } from './dice.js';
 import { bindForm } from './forms.js';
 import { createHistory } from './history.js';
 import { switchView } from './nav.js';
@@ -298,6 +298,72 @@ function whenOptions(c) {
   }).join('');
 }
 
+// ---------- attacks against a target ----------
+
+const MODES = { normal: 'Normal', adv: 'Advantage', dis: 'Disadvantage' };
+function targetOf(c) {
+  const id = S.atk.target[c.id];
+  return id && id !== c.id ? S.enc.c.find(x => x.id === id) || null : null;
+}
+
+function attackHtml(c) {
+  const others = R.sorted(S.enc).filter(x => x.id !== c.id);
+  if (!others.length) return '';
+  const t = targetOf(c), mode = S.atk.mode[c.id] || 'normal';
+  const hints = t ? R.attackHints(c, t) : [];
+  const last = S.atk.last?.by === c.id ? S.atk.last : null;
+  const lt = last && S.enc.c.find(x => x.id === last.target);
+  let result = '';
+  if (last && lt) {
+    const vs = `${last.total} vs AC ${last.ac}`;
+    const exprs = last.parts.map(p => (last.crit ? doubleDice(p.e) : p.e) + (p.t ? ` ${p.t.toLowerCase()}` : '')).join(' + ');
+    result = last.hit
+      ? `<div class="atkres hit"><p><b>${esc(last.feat)} ${last.crit ? 'crits' : 'hits'} ${esc(who(lt))}</b> (${last.crit ? 'natural 20' : vs}).${last.crit ? ' Damage dice are doubled.' : ''}</p>
+          ${last.parts.length ? `<div class="line"><select class="field" id="atkDmgMod" aria-label="Resistance to this damage">${Object.entries(R.DAMAGE_MODS).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
+          <button class="btn bad" data-a="atkapply">Roll ${esc(exprs)} and apply</button>` : '<div class="line"><span class="hint">No damage dice on this attack: apply damage by hand.</span>'}
+          <button class="link" data-a="atkclear">Dismiss</button></div></div>`
+      : `<div class="atkres miss"><p><b>${esc(last.feat)} misses ${esc(who(lt))}</b> (${last.nat === 1 ? 'natural 1' : vs}).</p><button class="link" data-a="atkclear">Dismiss</button></div>`;
+  }
+  return `<div class="blk"><h4>Attack</h4>
+    <div class="line"><label class="hint">Target <select class="field" id="atkTarget"><option value="">None: just roll</option>${others.map(x =>
+      `<option value="${x.id}"${t?.id === x.id ? ' selected' : ''}>${esc(who(x))} (AC ${R.vit(ctx, x).ac})</option>`).join('')}</select></label>
+      <select class="field" id="atkMode" aria-label="Roll with">${Object.entries(MODES).map(([k, l]) => `<option value="${k}"${k === mode ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+    ${hints.map(h => `<p class="hint atkhint">${esc(h.text)}</p>`).join('')}
+    ${result}
+    <p class="hint">${t ? `Click a to-hit bonus below to attack ${esc(who(t))}.` : 'Pick a target, then click a to-hit bonus below to roll against its AC.'}</p></div>`;
+}
+
+/** A to-hit button was clicked while the attacker has a target: roll, compare with AC, remember the result. */
+function attackTarget(c, t, btn) {
+  const bonus = +((btn.dataset.roll.match(/^1d20([+-]\d+)?$/) || [])[1] || 0);
+  const mode = S.atk.mode[c.id] || 'normal';
+  const dice = mode === 'normal' ? [d20()] : [d20(), d20()];
+  const pen = ctx.linked(c) ? 0 : 2 * R.exhaustion(ctx, c);          // a sheet's bonus already includes Exhaustion
+  const ac = R.vit(ctx, t).ac;
+  const r = R.attackOutcome({ dice, mode, bonus, pen, ac });
+  const feat = btn.dataset.feat || 'Attack';
+  const res = r.crit ? 'critical hit' : r.hit ? 'hit' : 'miss';
+  pushLog(`${who(c)} · ${feat} vs ${who(t)}: ${res}`,
+    { total: r.total, detail: `[${dice.join(',')}]${mode !== 'normal' ? ` ${mode}` : ''} ${bonus >= 0 ? '+' : '−'} ${Math.abs(bonus)}${pen ? ` − ${pen} exhaustion` : ''} vs AC ${ac}` },
+    r.crit ? 'crit' : r.nat === 1 ? 'fumble' : '');
+  S.atk.last = { by: c.id, target: t.id, feat, parts: JSON.parse(btn.dataset.dmg || '[]'), ac, ...r };
+  renderInspector().then(() => $('.atkres')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+}
+
+function applyAttack(c) {
+  const last = S.atk.last, t = last && S.enc.c.find(x => x.id === last.target);
+  if (!t) { S.atk.last = null; return; }
+  const rolls = last.parts.map(p => ({ ...p, r: roll(last.crit ? doubleDice(p.e) : p.e) })).filter(p => p.r);
+  const total = rolls.reduce((n, p) => n + p.r.total, 0);
+  const mod = $('#atkDmgMod')?.value || 'normal';
+  pushLog(`${who(c)} · ${last.feat} damage to ${who(t)}${last.crit ? ' (crit)' : ''}`,
+    { total, detail: rolls.map(p => `${p.r.detail}${p.t ? ' ' + p.t.toLowerCase() : ''}`).join(' + ') });
+  remember(`${last.feat}: ${total} damage to ${who(t)}`);
+  S.atk.last = null;
+  const n = R.adjustDamage(total, { mod });
+  changed(t, [`${who(t)} takes ${n}${mod !== 'normal' ? ` (${R.DAMAGE_MODS[mod].toLowerCase()})` : ''}.`, ...(n > 0 ? R.damage(ctx, t, n, last.crit) : [])]);
+}
+
 function combatantPanel(c) {
   const v = R.vit(ctx, c), ch = ctx.linked(c), hp = R.hp(ctx, c), temp = R.tempHp(ctx, c);
   const slots = v.slots || [];
@@ -337,6 +403,7 @@ function combatantPanel(c) {
       <div class="line"><label class="hint">Counts down at <select class="field" id="insWhen" aria-label="When the rounds count down">${whenOptions(c)}</select></label></div>
       <p class="hint">Blank rounds lasts until removed. For an effect another creature caused ("until the end of your next turn"), pick that creature's turn: it counts down there, and a timer set during that creature's own turn skips that turn. Adding Exhaustion raises its level by one.</p></div>
     <div class="blk"><h4>Spell slots ${ch ? '<span class="hint">from sheet</span>' : `<button class="link" data-a="editslots">${editing ? 'Done' : 'Edit'}</button>`}</h4>${slotHtml}</div>
+    ${attackHtml(c)}
     ${ch ? derivedHtml(ch, { compact: true }) : ''}
     <div id="sbHost"></div>
     <div class="blk"><h4>Notes</h4><textarea class="field" id="insNotes" data-path="notes" placeholder="Tactics, reminders, loot…">${esc(c.notes)}</textarea></div>
@@ -439,6 +506,8 @@ function onListClick(e) {
 }
 
 async function onInspectClick(e) {
+  const atkBtn = e.target.closest('[data-type="atk"][data-dmg]'), attacker = selected();
+  if (atkBtn && attacker && targetOf(attacker)) return attackTarget(attacker, targetOf(attacker), atkBtn);
   if (handleRollClick(e)) return;
   const addBtn = e.target.closest('[data-addmon]');
   if (addBtn) return addMonster(addBtn.dataset.addmon);
@@ -475,6 +544,8 @@ async function onInspectClick(e) {
   const label = UNDO[a]?.();
   if (label) remember(label);
   switch (a) {
+    case 'atkapply': applyAttack(c); break;
+    case 'atkclear': S.atk.last = null; break;
     case 'rx': c.rx = !c.rx; changed(c); break;
     case 'leg': R.toggleSlot(c.res.leg, +b.dataset.p); changed(c); break;
     case 'lr': R.toggleSlot(c.res.lr, +b.dataset.p); changed(c); break;
@@ -595,6 +666,13 @@ export function initCombat() {
   });
 
   $('#inspect').addEventListener('click', onInspectClick);
+  $('#inspect').addEventListener('change', e => {
+    const c = selected();
+    if (!c || !['atkTarget', 'atkMode'].includes(e.target.id)) return;
+    if (e.target.id === 'atkTarget') { S.atk.target[c.id] = e.target.value; if (S.atk.last?.by === c.id) S.atk.last = null; }
+    else S.atk.mode[c.id] = e.target.value;
+    renderInspector();
+  });
   $('#inspect').addEventListener('keydown', e => {
     if (e.key === 'Enter' && e.target.id === 'insAmt') { e.preventDefault(); toast('Choose Damage, Heal or Temp HP.'); }
   });

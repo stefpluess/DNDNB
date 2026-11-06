@@ -38,16 +38,21 @@ const dieExpr = (count, die, bonus) => {
   return d ? d + (bonus ? plusMinus(bonus) : '') : (bonus ? String(bonus) : '');
 };
 
-const rollBtn = (expr, type, lbl, text, title = '') =>
-  `<button class="btn roll" data-roll="${esc(expr)}" data-type="${type}" data-label="${esc(lbl)}"${title ? ` title="${esc(title)}"` : ''}>${esc(text)}</button>`;
+const rollBtn = (expr, type, lbl, text, title = '', attrs = '') =>
+  `<button class="btn roll" data-roll="${esc(expr)}" data-type="${type}" data-label="${esc(lbl)}"${title ? ` title="${esc(title)}"` : ''}${attrs}>${esc(text)}</button>`;
+
+/** On a to-hit button: the attack's name and damage, so the tracker can roll it against a target. */
+export const attackAttrs = (feat, parts) =>
+  ` data-feat="${esc(feat)}" data-dmg="${esc(JSON.stringify(parts.filter(p => p.e)))}"`;
 
 function featHtml(f, who) {
   const btns = [];
   for (const a of f.attacks || []) {
-    if (a.to_hit_mod != null) btns.push(rollBtn(`1d20${plusMinus(a.to_hit_mod)}`, 'atk', `${who} · ${f.name} to hit`, `${signed(a.to_hit_mod)} to hit`));
     const dmg = dieExpr(a.damage_die_count, a.damage_die_type, a.damage_bonus);
-    if (dmg) btns.push(rollBtn(dmg, 'dmg', `${who} · ${f.name} ${nm(a.damage_type)} damage`, `${dmg} ${nm(a.damage_type).toLowerCase()}`, 'Shift-click for a critical hit'));
     const extra = dieExpr(a.extra_damage_die_count, a.extra_damage_die_type, a.extra_damage_bonus);
+    const parts = [{ e: dmg, t: nm(a.damage_type) }, { e: extra, t: nm(a.extra_damage_type) }];
+    if (a.to_hit_mod != null) btns.push(rollBtn(`1d20${plusMinus(a.to_hit_mod)}`, 'atk', `${who} · ${f.name} to hit`, `${signed(a.to_hit_mod)} to hit`, '', attackAttrs(f.name, parts)));
+    if (dmg) btns.push(rollBtn(dmg, 'dmg', `${who} · ${f.name} ${nm(a.damage_type)} damage`, `${dmg} ${nm(a.damage_type).toLowerCase()}`, 'Shift-click for a critical hit'));
     if (extra) btns.push(rollBtn(extra, 'dmg', `${who} · ${f.name} ${nm(a.extra_damage_type)} damage`, `+ ${extra} ${nm(a.extra_damage_type).toLowerCase()}`, 'Shift-click for a critical hit'));
   }
   const cost = f.action_type === 'LEGENDARY_ACTION' && f.legendary_action_cost > 1 ? ` (Costs ${f.legendary_action_cost} Actions)` : '';

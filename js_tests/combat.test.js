@@ -246,6 +246,27 @@ test("removing a timer's source moves the timer to its bearer's own turn", () =>
   assert.deepEqual(orc.conds, [{ n: 'Frightened', d: 2 }]);
 });
 
+// ---------- attacks ----------
+
+test('attack rolls: total against AC, natural 20 crits, natural 1 misses', () => {
+  assert.deepEqual(R.attackOutcome({ dice: [12], bonus: 5, ac: 17 }), { nat: 12, total: 17, hit: true, crit: false });
+  assert.equal(R.attackOutcome({ dice: [11], bonus: 5, ac: 17 }).hit, false);
+  assert.deepEqual(R.attackOutcome({ dice: [20], bonus: -5, ac: 30 }), { nat: 20, total: 15, hit: true, crit: true });
+  assert.equal(R.attackOutcome({ dice: [1], bonus: 30, ac: 10 }).hit, false);
+  assert.equal(R.attackOutcome({ dice: [4, 15], mode: 'adv', bonus: 2, ac: 17 }).total, 17);
+  assert.equal(R.attackOutcome({ dice: [4, 15], mode: 'dis', bonus: 2, ac: 17 }).total, 6);
+  assert.equal(R.attackOutcome({ dice: [15], bonus: 2, pen: 4, ac: 15 }).hit, false);   // Exhaustion 2
+});
+
+test('attack reminders come from both creatures\' conditions', () => {
+  const tgt = mk({ conds: [{ n: 'Restrained', d: null }, { n: 'Prone', d: null }] });
+  const atk = mk({ conds: [{ n: 'Poisoned', d: null }] });
+  const hints = R.attackHints(atk, tgt);
+  assert.deepEqual(hints.map(h => h.mode), ['adv', null, 'dis']);
+  assert.match(hints[2].text, /Poisoned attacker/);
+  assert.deepEqual(R.attackHints(mk(), mk()), []);
+});
+
 // ---------- reactions and monster resources ----------
 
 const DRAGON = {

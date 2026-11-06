@@ -1,6 +1,7 @@
 // The computed side of a character sheet (AC, attacks, saves, skills), shown in the Party view
 // and, in a compact form, in the combat inspector.
 
+import { attackAttrs } from './statblock.js';
 import { esc, label, plusMinus, signed } from './util.js';
 
 const UP = a => a.toUpperCase();
@@ -11,8 +12,8 @@ export const classLine = s =>
 
 export function derivedHtml(ch, { compact = false } = {}) {
   const d = ch.derived, s = ch.sheet, name = s.name;
-  const roll = (expr, type, lbl, text, cls = 'link', title = '') =>
-    `<button class="${cls}" data-roll="${esc(expr)}" data-type="${type}" data-label="${esc(lbl)}"${title ? ` title="${esc(title)}"` : ''}>${text}</button>`;
+  const roll = (expr, type, lbl, text, cls = 'link', title = '', attrs = '') =>
+    `<button class="${cls}" data-roll="${esc(expr)}" data-type="${type}" data-label="${esc(lbl)}"${title ? ` title="${esc(title)}"` : ''}${attrs}>${text}</button>`;
 
   const attacks = d.attacks.map(a => {
     const notes = [a.equipped ? '' : 'not equipped', a.mastery && a.mastery_known ? `Mastery: ${a.mastery}` : '',
@@ -21,7 +22,7 @@ export function derivedHtml(ch, { compact = false } = {}) {
     const dmg = a.damage_dice ? `${a.damage_dice}${a.damage_bonus ? plusMinus(a.damage_bonus) : ''}` : '';
     return `<div class="atk ${a.equipped ? '' : 'off'}">
       <div class="top-line"><span class="nm">${esc(a.name)}</span>
-        ${roll(`1d20${plusMinus(a.to_hit)}`, 'atk', `${name} · ${a.name} to hit`, signed(a.to_hit), 'btn roll', hitTitle)}
+        ${roll(`1d20${plusMinus(a.to_hit)}`, 'atk', `${name} · ${a.name} to hit`, signed(a.to_hit), 'btn roll', hitTitle, attackAttrs(a.name, [{ e: dmg, t: a.damage_type || '' }]))}
         ${dmg ? roll(dmg, 'dmg', `${name} · ${a.name} damage`, esc(a.damage), 'btn roll', 'Shift-click for a critical hit') : ''}</div>
       <span class="sub">${notes}</span></div>`;
   }).join('') || '<p class="hint">No weapons in the inventory.</p>';

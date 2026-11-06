@@ -16,6 +16,7 @@ export const S = {
   editingSlots: new Set(),    // combatant ids with the slot editor open (UI only, never saved)
   targets: new Map(),         // combatant id -> { half, mod }: ticked for area damage (UI only, never saved)
   groupAmt: '',               // what's typed in the area damage box
+  atk: { target: {}, mode: {}, last: null },   // attacks: target and roll mode per attacker id, last attack result (UI only)
   // party view
   currentChar: null,
   // bestiary view
