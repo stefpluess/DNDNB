@@ -15,8 +15,8 @@
 export function vit(ctx, c) {
   const ch = ctx.linked(c);
   return ch
-    ? { o: ch.sheet, hp: 'hp', max: 'max_hp', temp: 'temp_hp', exh: 'exhaustion', ac: ch.derived.ac, slots: ch.sheet.slots, name: ch.sheet.name }
-    : { o: c, hp: 'hp', max: 'max', temp: 'temp', exh: 'exh', ac: c.ac, slots: c.slots, name: c.name };
+    ? { o: ch.sheet, hp: 'hp', max: 'max_hp', temp: 'temp_hp', exh: 'exhaustion', insp: 'inspiration', ac: ch.derived.ac, slots: ch.sheet.slots, name: ch.sheet.name }
+    : { o: c, hp: 'hp', max: 'max', temp: 'temp', exh: 'exh', insp: 'insp', ac: c.ac, slots: c.slots, name: c.name };
 }
 export const nameOf = (ctx, c) => vit(ctx, c).name;
 export const hp = (ctx, c) => { const v = vit(ctx, c); return +v.o[v.hp] || 0; };
@@ -26,6 +26,9 @@ export const exhaustion = (ctx, c) => { const v = vit(ctx, c); return +v.o[v.exh
 const set = (ctx, c, field, n) => { const v = vit(ctx, c); v.o[v[field]] = n; };
 
 export const hasCond = (c, n) => c.conds.some(x => x.n === n);
+/** Heroic Inspiration (kept on a party member's sheet, so it lasts between sessions). */
+export const inspired = (ctx, c) => { const v = vit(ctx, c); return !!v.o[v.insp]; };
+export const setInspired = (ctx, c, on) => set(ctx, c, 'insp', !!on);
 export const concentrationDC = damage => Math.min(30, Math.max(10, Math.floor(damage / 2)));
 
 // ---------- turn order ----------
@@ -499,6 +502,7 @@ export function attackHints(atk, tgt) {
   for (const x of tgt.conds) {
     if (x.n === 'Dodging') out.push({ text: 'Dodging target: attacks have Disadvantage (if it can see you)', mode: 'dis' });
     if (x.n === 'Reckless') out.push({ text: 'Reckless target: attacks against it have Advantage', mode: 'adv' });
+    if (x.n === 'Staggered') out.push({ text: 'Staggered: the next attack against it has Advantage', mode: 'adv' });
     if (x.n === 'Vexed' && x.src === atk.id) out.push({ text: 'Vex: your next attack against it has Advantage', mode: 'adv' });
     if (TARGET_ADV[x.n]) out.push({ text: `${x.n} target: attacks have Advantage`, mode: 'adv' });
     if (x.n === 'Paralyzed' || x.n === 'Unconscious') out.push({ text: `${x.n} target: a hit from within 5 ft is a critical hit`, mode: null });
@@ -558,6 +562,8 @@ export function monsterResources(m) {
 export function startTurn(ctx, c) {
   const msgs = [];
   c.rx = false;
+  // Champion's Heroic Warrior: Heroic Inspiration at the start of each turn if you don't have it
+  if (c.heroicWarrior && !inspired(ctx, c) && hp(ctx, c) > 0) { setInspired(ctx, c, true); msgs.push(`${nameOf(ctx, c)} gains Heroic Inspiration (Heroic Warrior).`); }
   if (!c.res) return msgs;
   if (c.res.leg) c.res.leg.used = 0;
   for (const u of c.res.uses || []) if (u.kind === 'recharge' && u.used) msgs.push(rollRecharge(ctx, c, u).msg);
@@ -721,12 +727,51 @@ export const STATUS = {
   Vexed: { until: 'end', text: "The attacker's next attack against it has Advantage." },
   Sapped: { until: 'start', text: 'Disadvantage on its next attack roll.' },
   Slowed: { until: 'start', text: 'Speed −10 ft.' },
+  Staggered: { until: 'start', text: 'Speed halved; the next attack against it has Advantage (Stunning Strike saved).' },
   'Aura of Protection': { aura: true, text: "Adds the paladin's Cha modifier to its saves." },
   'Aura of Courage': { aura: true, def: { condImmune: ['frightened'] }, text: 'Immune to Frightened.' },
   'Aura of Devotion': { aura: true, def: { condImmune: ['charmed'] }, text: 'Immune to Charmed.' },
   'Aura of Warding': { aura: true, def: { resist: ['necrotic', 'psychic', 'radiant'] }, text: 'Resistance to necrotic, psychic and radiant damage.' },
 };
 export const COVER = { none: 0, half: 2, three_quarters: 5 };
+
+/**
+ * Rogue Cunning Strike options (2024): cost in Sneak Attack d6s, the save, and what a failure does.
+ * `from`: Rogue level it's available at.
+ */
+export const CUNNING = {
+  poison: { name: 'Poison', cost: 1, from: 5, save: 'con', cond: 'Poisoned', rounds: 10, repeat: true, text: 'Con save or Poisoned for 1 minute (repeats the save at the end of each turn).' },
+  trip: { name: 'Trip', cost: 1, from: 5, save: 'dex', cond: 'Prone', text: 'Large or smaller: Dex save or Prone.' },
+  withdraw: { name: 'Withdraw', cost: 1, from: 5, text: 'You move up to half your speed without provoking Opportunity Attacks.' },
+  daze: { name: 'Daze', cost: 2, from: 14, save: 'con', cond: 'Dazed', rounds: 1, until: 'end', text: 'Con save or on its next turn it can do only one of: move, action, Bonus Action.' },
+  knockout: { name: 'Knock Out', cost: 6, from: 14, save: 'con', cond: 'Unconscious', rounds: 10, repeat: true, text: 'Con save or Unconscious for 1 minute or until it takes damage (repeats the save at the end of each turn).' },
+  obscure: { name: 'Obscure', cost: 3, from: 14, save: 'dex', cond: 'Blinded', rounds: 1, until: 'end', text: 'Dex save or Blinded until the end of your next turn.' },
+};
+
+/** Sneak Attack dice left after paying for Cunning Strikes: "5d6" minus 3 → "2d6" (null if none left). */
+export function sneakAfter(sneak, cost) {
+  const n = parseInt(sneak, 10) - cost;
+  return n > 0 ? `${n}d6` : null;
+}
+
+/**
+ * The target failed (or made) the save of an on-hit effect (Stunning Strike, Cunning Strike) from `by`.
+ * Applies the condition on a failure (with a repeated save against `dc` where the effect allows one);
+ * Stunning Strike's success staggers it instead. Returns messages.
+ */
+export function onHitSave(ctx, by, tgt, effect, ok, dc = 0) {
+  const n = nameOf(ctx, tgt);
+  if (effect === 'stunning') {
+    if (ok) return [`${n} resists the Stunning Strike: staggered (speed halved, next attack against it has Advantage).`, ...applyStatus(ctx, tgt, 'Staggered', by)];
+    return [`${n} is Stunned until the start of ${nameOf(ctx, by)}'s next turn.`, ...addCondition(ctx, tgt, 'Stunned', 1, { src: by.id, at: 'start' })];
+  }
+  const cs = CUNNING[effect];
+  if (!cs?.cond) return [];
+  if (ok) return [`${n} resists the ${cs.name} Cunning Strike.`];
+  const opts = cs.until ? { src: by.id, at: cs.until } : {};
+  if (cs.repeat) opts.save = { ab: cs.save, dc, when: 'end' };
+  return [`${cs.name}: ${n} is ${cs.cond}.`, ...addCondition(ctx, tgt, cs.cond, cs.rounds || null, opts)];
+}
 
 /** Put a status on `c`, caused by `src` (itself for Dodge and Reckless Attack). `v`: a value it carries (aura bonus). */
 export function applyStatus(ctx, c, name, src, v) {

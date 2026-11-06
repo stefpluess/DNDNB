@@ -163,7 +163,7 @@ def blank_sheet(name="New character"):
         "exhaustion": 0,
         "styles": [], "spell_ability": None, "ac_misc": 0, "init_misc": 0,
         "slots": [{"max": 0, "used": 0} for _ in range(9)],
-        "hit_dice_used": 0, "resources_used": {}, "subclass": "", "choices": {},
+        "hit_dice_used": 0, "resources_used": {}, "subclass": "", "choices": {}, "inspiration": False,
         "inventory": [], "notes": "",
     }
 
@@ -724,7 +724,10 @@ def derive(sheet):
         "class_source": "Tasha's" if cls == "artificer" else "PHB 2024",
         "defenses": sub["defenses"], "cdef": sub["cdef"], "ac_cond": sub["ac_cond"],
         "dex_save_adv": sub["dex_save_adv"], "auras": sub["auras"],
-        "class_features": sub["class_features"], "class_spells": sub["class_spells"], "hunters_mark_die": sub["mark_die"],
+        "class_features": sub["class_features"], "heroic_warrior": sub["heroic_warrior"],
+        # save DCs of on-hit features: Stunning Strike (Monk 5+), Cunning Strike (Rogue 5+)
+        "stunning_dc": 8 + m["wis"] + pb if cls == "monk" and level >= 5 else None,
+        "cunning_dc": 8 + m["dex"] + pb if cls == "rogue" and level >= 5 else None, "class_spells": sub["class_spells"], "hunters_mark_die": sub["mark_die"],
         "rage_damage": rage, "sneak_attack": sneak,
         "smite": cls == "paladin" and level >= 2,
         "hit_die": (CLASS_DEFAULTS.get(cls) or (None,) * 5)[4],

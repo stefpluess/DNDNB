@@ -619,6 +619,33 @@ test('state-dependent defenses and AC from a character sheet; Danger Sense', () 
   assert.equal(R.COVER.three_quarters, 5);
 });
 
+// ---------- on-hit effects and inspiration ----------
+
+test('Stunning Strike and Cunning Strike', () => {
+  const monk = mk({ name: 'Monk', init: 20 }), orc = mk({ name: 'Orc', init: 10 });
+  const ctx = fight([monk, orc]);
+  R.step(ctx, 1);
+  assert.match(R.onHitSave(ctx, monk, orc, 'stunning', false).join(' '), /Stunned until the start of Monk/);
+  R.step(ctx, 1); R.step(ctx, 1);                                  // start of the Monk's next turn
+  assert.ok(!R.hasCond(orc, 'Stunned'));
+  R.onHitSave(ctx, monk, orc, 'stunning', true);
+  assert.deepEqual(R.attackHints(monk, orc).map(h => h.mode), ['adv']);
+  R.onHitSave(ctx, monk, orc, 'poison', false, 14);
+  assert.deepEqual(orc.conds.find(x => x.n === 'Poisoned').save, { ab: 'con', dc: 14, when: 'end' });
+  assert.deepEqual([R.sneakAfter('5d6', 3), R.sneakAfter('3d6', 6)], ['2d6', null]);
+});
+
+test('Heroic Inspiration: kept on the sheet; Heroic Warrior regains it each turn', () => {
+  const sheet = { name: 'Champ', hp: 20, max_hp: 20, inspiration: false };
+  const champ = mk({ kind: 'pc', charId: 1, heroicWarrior: true, init: 20 }), o = mk({ init: 1 });
+  const ctx = { enc: { round: 1, active: null, skip: true, c: [champ, o], ticks: [] }, linked: c => (c.charId ? { sheet, derived: { ac: 15 } } : null) };
+  assert.equal(R.inspired(ctx, champ), false);
+  assert.match(R.step(ctx, 1).join(' '), /gains Heroic Inspiration/);
+  assert.equal(sheet.inspiration, true);
+  R.setInspired(ctx, champ, false);
+  assert.equal(R.inspired(ctx, o), false);
+});
+
 // ---------- names ----------
 
 test('group names number creatures and never repeat a number', () => {

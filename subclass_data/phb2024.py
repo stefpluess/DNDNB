@@ -206,7 +206,7 @@ add("champion-2024", S("fighter", "Champion", P24, [
     F(3, "Improved Critical", "Weapon and Unarmed Strike attacks score a critical hit on a 19 or 20.", crit=19),
     F(3, "Remarkable Athlete", "Advantage on Initiative and Strength (Athletics) checks; after a critical hit, move up to half your speed without provoking Opportunity Attacks."),
     F(7, "Additional Fighting Style", "Gain another Fighting Style feat."),
-    F(10, "Heroic Warrior", "At the start of each of your turns in combat you gain Heroic Inspiration if you don't have it."),
+    F(10, "Heroic Warrior", "At the start of each of your turns in combat you gain Heroic Inspiration if you don't have it.", heroic_warrior=True),
     F(15, "Superior Critical", "Critical hits on an 18–20.", crit=18),
     F(18, "Survivor", "Advantage on death saves (a roll of 18–20 counts as a 20); at the start of each turn with at most half HP (and above 0), regain 5 + Con modifier HP."),
 ]))

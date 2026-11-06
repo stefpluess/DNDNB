@@ -202,12 +202,13 @@ function rowHtml(c) {
   const classes = [`cb k-${c.kind}`, c.id === S.enc.active && 'is-active', turn === 'done' && 'is-done', S.sel?.type === 'c' && S.sel.id === c.id && 'sel', (hp <= 0 || life === 'dead') && 'is-down', life === 'dead' && 'is-dead'].filter(Boolean).join(' ');
   const tag = life ? { dead: 'Dead', stable: 'Stable', dying: 'Dying', down: 'Down' }[life] : KIND[c.kind];
   const turnTag = turn === 'now' ? '<span class="turn now">Their turn</span>' : turn === 'done' ? '<span class="turn done" title="Already acted this round, or joined after its initiative had passed">✓ Acted</span>' : '';
+  const insp = c.kind === 'pc' ? `<button class="insp ${R.inspired(ctx, c) ? 'on' : ''}" data-a="insp" title="Heroic Inspiration: ${R.inspired(ctx, c) ? 'has it (click when spent)' : 'none (click to give)'}">★${R.inspired(ctx, c) ? ' Inspired' : ''}</button>` : '';
   const rx = `<button class="rx ${c.rx ? 'used' : ''}" data-a="rx" title="Reaction ${c.rx ? 'used (comes back at the start of its turn)' : 'available'}. Click to toggle." aria-label="Reaction ${c.rx ? 'used' : 'available'}">Reaction</button>`;
   const leg = c.res?.leg ? `<span class="legmini" title="Legendary actions left this round"><small>Legendary</small>${pipsHtml(c.res.leg, 'leg', 'Legendary action')}</span>` : '';
   const spent = (c.res?.uses || []).filter(u => u.kind === 'recharge' && u.used).map(u => `<span class="spent" title="Rolls to recharge at the start of its turn">${esc(u.name)} spent</span>`).join('');
   return `<div class="${classes}" data-id="${c.id}">
     <input class="field init" type="number" id="init-${c.id}" data-f="init" value="${c.init}" aria-label="Initiative for ${esc(v.name)}">
-    <div class="who"><div class="top-line"><input type="checkbox" class="pick" data-pick${S.targets.has(c.id) ? ' checked' : ''} aria-label="Target ${esc(v.name)}" title="Tick to include in area damage"><span class="nm">${esc(v.name)}</span>${turnTag}<span class="tag">${tag}</span></div><div class="resrow">${rx}${leg}${spent}</div>${chipsHtml(c)}</div>
+    <div class="who"><div class="top-line"><input type="checkbox" class="pick" data-pick${S.targets.has(c.id) ? ' checked' : ''} aria-label="Target ${esc(v.name)}" title="Tick to include in area damage"><span class="nm">${esc(v.name)}</span>${turnTag}<span class="tag">${tag}</span></div><div class="resrow">${rx}${insp}${leg}${spent}</div>${chipsHtml(c)}</div>
     <span class="ac${R.acOf(ctx, c) !== v.ac ? ' up' : ''}" title="Armor Class${R.acOf(ctx, c) !== v.ac ? ` (${v.ac} base, raised by a spell)` : ''}"><b>${R.acOf(ctx, c)}</b><small>AC</small></span>
     <div class="hp ${hpState(c)}"><div class="meter"><i style="width:${Math.max(0, Math.min(100, hp / max * 100))}%"></i>${temp ? `<em style="width:${Math.min(100, temp / max * 100)}%"></em>` : ''}</div>
       <span class="num">${hp}<small>/${max}</small>${temp ? ` <span class="tmp">+${temp}</span>` : ''}</span></div>
@@ -226,6 +227,7 @@ function syncFromSheets() {
     c.cdef = d.cdef || [];
     c.acCond = d.ac_cond || [];
     c.dexSaveAdv = d.dex_save_adv || null;
+    c.heroicWarrior = !!d.heroic_warrior;
   }
 }
 
@@ -550,6 +552,16 @@ function hitOptionsHtml(c, t, last) {
     if (r.needs && !R.hasCond(c, r.needs)) return;
     out.push(`<label class="hint"><input type="checkbox" data-rider="${i}"> ${esc(r.name)} (+${esc(r.dice)} ${esc(r.type)}${r.once ? ', once per turn' : ''})</label>`);
   });
+  const d = ch?.derived;
+  if (d?.stunning_dc && x.melee) {
+    const focus = d.resources.find(r => r.key === 'focus');
+    out.push(`<label class="hint"><input type="checkbox" id="atkStun"${focus && focus.used >= focus.max ? ' disabled' : ''}> Stunning Strike (1 Focus, Con save DC ${d.stunning_dc})</label>`);
+  }
+  if (x.sneak && d?.cunning_dc) {
+    const opts = Object.entries(R.CUNNING).filter(([, cs]) => d.level >= cs.from && parseInt(x.sneak, 10) >= cs.cost);
+    out.push(`<label class="hint">Cunning Strike <select class="field" id="atkCunning"><option value="">none</option>${opts.map(([k, cs]) =>
+      `<option value="${k}" title="${esc(cs.text)}">${cs.name} (−${cs.cost}d6)</option>`).join('')}</select> <small>DC ${d.cunning_dc}, with Sneak Attack</small></label>`);
+  }
   if (x.sneak) out.push(`<label class="hint"><input type="checkbox" id="atkSneak"> Sneak Attack (+${esc(x.sneak)}, once per turn: Advantage or an ally next to the target)</label>`);
   if (x.smite && ch) {
     const fiend = FIEND_OR_UNDEAD(t);
@@ -589,7 +601,12 @@ function applyAttack(c) {
   const x = last.extra || {}, base = last.parts[0]?.t || '';
   const parts = last.parts.map(p => ({ ...p, min: x.gwf ? 3 : 0 }));
   if (x.rage && R.hasCond(c, 'Raging')) parts.push({ e: String(x.rage), t: base, label: 'Rage' });
-  if (x.sneak && $('#atkSneak')?.checked) parts.push({ e: x.sneak, t: base, label: 'Sneak Attack' });
+  const cunning = x.sneak && $('#atkSneak')?.checked ? $('#atkCunning')?.value : '';
+  const stun = !!$('#atkStun')?.checked;
+  if (x.sneak && $('#atkSneak')?.checked) {
+    const dice = cunning ? R.sneakAfter(x.sneak, R.CUNNING[cunning].cost) : x.sneak;   // Cunning Strike costs Sneak Attack dice
+    if (dice) parts.push({ e: dice, t: base, label: cunning ? `Sneak Attack (${R.CUNNING[cunning].name})` : 'Sneak Attack' });
+  }
   const spellRiders = R.hitRiders(c, t, { markDie: ctx.linked(c)?.derived.hunters_mark_die });
   document.querySelectorAll('#inspect [data-spellrider]:checked').forEach(el => {
     const r = spellRiders[+el.dataset.spellrider];
@@ -619,7 +636,78 @@ function applyAttack(c) {
   const n = applied.reduce((sum, p) => sum + R.adjustDamage(p.rolled, { mod: p.m }), 0);
   const notes = applied.filter(p => p.m !== 'normal').map(p => `${p.t ? p.t.toLowerCase() + ' ' : ''}${(R.DAMAGE_MODS[p.m] || 'resistant + vulnerable').toLowerCase()}`);
   if (smite && ch) scheduleCharSave(c.charId);
-  changed(t, [`${who(t)} takes ${n}${notes.length ? ` (${notes.join(', ')})` : ''}.`, ...(n > 0 ? R.damage(ctx, t, n, last.crit) : [])]);
+  const dmgMsgs = n > 0 ? R.damage(ctx, t, n, last.crit) : [];
+  const standing = R.hp(ctx, t) > 0;                                 // effects only matter if it's still up
+  const after = [];
+  // on-hit effects with a save: Stunning Strike (spends Focus) and Cunning Strike
+  const saveFor = (ab, dc, label) => {
+    const rule = R.saveRule(t, ab), bonus = saveBonus(t, ab) ?? 0, dice = [d20(), d20()];
+    const r = R.rollSave({ dice, bonus, dc, rule, extra: rollExtras(t).total });
+    pushLog(`${who(t)} ${ab.toUpperCase()} save vs ${label} DC ${dc}: ${r.ok ? 'success' : 'failure'}`, { total: r.total ?? 0, detail: r.auto ? `fails automatically (${r.auto})` : `[${r.die}] ${signed(bonus)}` });
+    return r.ok;
+  };
+  if (stun && ch && standing) {
+    ch.sheet.resources_used.focus = (ch.sheet.resources_used.focus || 0) + 1;
+    scheduleCharSave(c.charId);
+    after.push(...R.onHitSave(ctx, c, t, 'stunning', saveFor('con', ch.derived.stunning_dc, 'Stunning Strike'), ch.derived.stunning_dc));
+  }
+  if (cunning && ch && standing) {
+    const cs = R.CUNNING[cunning];
+    if (cs.save) after.push(...R.onHitSave(ctx, c, t, cunning, saveFor(cs.save, ch.derived.cunning_dc, cs.name), ch.derived.cunning_dc));
+    else after.push(`${cs.name}: ${cs.text}`);
+  }
+  changed(t, [`${who(t)} takes ${n}${notes.length ? ` (${notes.join(', ')})` : ''}.`, ...dmgMsgs, ...after]);
+}
+
+// ---------- actions: Dodge, Help, Reckless Attack, Second Wind, Lay on Hands ----------
+
+function actionsHtml(c) {
+  const ch = ctx.linked(c), d = ch?.derived;
+  const res = k => d?.resources.find(r => r.key === k);
+  const others = R.sorted(S.enc).filter(x => x.id !== c.id && R.lifeState(ctx, x) !== 'dead');
+  const sw = res('second_wind'), loh = res('lay_on_hands');
+  return `<div class="blk"><h4>Actions</h4><div class="line">
+      <button class="btn sm" data-a="dodge" title="Until the start of its next turn: attacks against it have Disadvantage, Advantage on Dex saves">Dodge</button>
+      ${ch?.sheet.class_name.toLowerCase() === 'barbarian' ? '<button class="btn sm" data-a="reckless" title="Advantage on Str attacks this turn; attacks against you have Advantage until your next turn">Reckless Attack</button>' : ''}
+      ${sw ? `<button class="btn sm" data-a="secondwind"${sw.used >= sw.max ? ' disabled' : ''} title="Heal 1d10 + Fighter level">Second Wind (${sw.max - sw.used} left)</button>` : ''}</div>
+    <div class="line"><select class="field" id="helpTarget" aria-label="Help whom">${others.map(x => `<option value="${x.id}">${esc(who(x))}</option>`).join('')}</select>
+      <button class="btn sm" data-a="help" title="The ally has Advantage on its next attack roll or check before your next turn">Help</button></div>
+    ${loh ? `<div class="line"><label class="hint">Lay on Hands <input class="field tiny" type="number" min="1" id="lohAmt" placeholder="HP"> of ${loh.max - loh.used}</label>
+      <select class="field" id="lohTarget" aria-label="Heal whom"><option value="${c.id}">${esc(who(c))} (self)</option>${others.map(x => `<option value="${x.id}">${esc(who(x))}</option>`).join('')}</select>
+      <button class="btn sm ok" data-a="loh">Heal</button></div>` : ''}</div>`;
+}
+
+function doAction(c, a) {
+  const ch = ctx.linked(c);
+  const res = k => ch?.derived.resources.find(r => r.key === k);
+  const spend = (k, n = 1) => { ch.sheet.resources_used[k] = (ch.sheet.resources_used[k] || 0) + n; scheduleCharSave(c.charId); };
+  if (a === 'dodge') { remember(`${who(c)} Dodges`); return changed(c, [`${who(c)} takes the Dodge action.`, ...R.applyStatus(ctx, c, 'Dodging', c)]); }
+  if (a === 'reckless') { remember(`${who(c)}: Reckless Attack`); return changed(c, R.applyStatus(ctx, c, 'Reckless', c)); }
+  if (a === 'help') {
+    const t = S.enc.c.find(x => x.id === $('#helpTarget')?.value);
+    if (!t) return;
+    remember(`${who(c)} Helps ${who(t)}`);
+    return changed(t, [`${who(c)} helps ${who(t)}.`, ...R.applyStatus(ctx, t, 'Helped', c)]);
+  }
+  if (a === 'secondwind') {
+    const r = res('second_wind');
+    if (!r || r.used >= r.max) return toast('No Second Wind left.');
+    const heal = roll(`1d10+${ch.derived.level}`);
+    remember(`${who(c)}: Second Wind`);
+    spend('second_wind');
+    pushLog(`${who(c)} · Second Wind`, heal);
+    return changed(c, [`Second Wind: ${who(c)} regains ${heal.total} HP.`, ...R.heal(ctx, c, heal.total)]);
+  }
+  if (a === 'loh') {
+    const r = res('lay_on_hands'), t = S.enc.c.find(x => x.id === $('#lohTarget')?.value);
+    const n = Math.min(parseInt($('#lohAmt')?.value, 10) || 0, r ? r.max - r.used : 0);
+    if (!t || n <= 0) return toast('Enter how many HP to restore (up to the pool left).');
+    remember(`${who(c)}: Lay on Hands ${n} to ${who(t)}`);
+    spend('lay_on_hands', n);
+    const msgs = R.heal(ctx, t, n);
+    if (ctx.linked(t)) scheduleCharSave(t.charId);
+    return changed(t, [`Lay on Hands: ${who(t)} regains ${n} HP.`, ...msgs]);
+  }
 }
 
 // ---------- auras a party member extends to allies ----------
@@ -767,6 +855,7 @@ function combatantPanel(c) {
       <p class="hint">Blank rounds lasts until removed. For an effect another creature caused ("until the end of your next turn"), pick that creature's turn: it counts down there, and a timer set during that creature's own turn skips that turn. Adding Exhaustion raises its level by one.</p></div>
     <div class="blk"><h4>Spell slots ${ch ? '<span class="hint">from sheet</span>' : `<button class="link" data-a="editslots">${editing ? 'Done' : 'Edit'}</button>`}</h4>${slotHtml}</div>
     ${attackHtml(c)}
+    ${actionsHtml(c)}
     ${castHtml(c)}
     ${auraHtml(c)}
     ${summonHtml(c)}
@@ -806,11 +895,14 @@ async function doSearch() {
   } catch (e) { ul.innerHTML = `<li class="empty">${esc(e.message)}</li>`; }
 }
 
+/** An Initiative d20: with Disadvantage when the "Surprised" box is ticked (2024 surprise). */
+const rollInit = () => ($('#libSurprised')?.checked ? Math.min(d20(), d20()) : d20());
+
 /** A new combatant for monster `m` (initiative and, if asked, HP rolled). */
 function monsterCombatant(m, idx, name, rollHp, i = 0, kind = 'foe') {
   const hp = rollHp ? Math.max(1, roll(m.hit_dice || '')?.total || m.hit_points) : m.hit_points;
   const initBonus = monInit(m);
-  return { id: uid(), ref: `monster:${idx}`, name, kind, init: d20() + initBonus, mod: m.modifiers?.dexterity ?? initBonus, ac: monAC(m), hp, max: hp,
+  return { id: uid(), ref: `monster:${idx}`, name, kind, init: rollInit() + initBonus, mod: m.modifiers?.dexterity ?? initBonus, ac: monAC(m), hp, max: hp,
     temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100, rx: false,
     res: R.monsterResources(m), def: R.monsterDefenses(m), xp: +m.experience_points || 0 };
 }
@@ -842,7 +934,7 @@ export function addChar(id) {
   const ch = S.chars.get(id);
   if (S.enc.c.some(c => c.charId === id)) { toast(`${ch.sheet.name} is already in the fight.`); return null; }
   remember(`Add ${ch.sheet.name}`);
-  const init = d20() + ch.derived.initiative;
+  const init = rollInit() + ch.derived.initiative;
   S.enc.c.push({ id: uid(), charId: id, name: ch.sheet.name, kind: 'pc', init, mod: ch.derived.mods.dex, ac: ch.derived.ac,
     hp: ch.sheet.hp, max: ch.sheet.max_hp, temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + Math.random() });
   const waiting = R.joinCombat(ctx, S.enc.c[S.enc.c.length - 1]);
@@ -867,6 +959,7 @@ function onListClick(e) {
     } else if (a === 'rmcond') { remember(`Remove ${c.conds[+b.dataset.i]?.n} from ${who(c)}`); changed(c, R.removeCondition(ctx, c, +b.dataset.i)); }
     else if (a === 'exhdown') { remember(`Lower ${who(c)}'s Exhaustion`); changed(c, R.setExhaustion(ctx, c, R.exhaustion(ctx, c) - 1)); }
     else if (a === 'rx') { remember(`Reaction for ${who(c)}`); c.rx = !c.rx; changed(c); }
+    else if (a === 'insp') { remember(`Heroic Inspiration for ${who(c)}`); R.setInspired(ctx, c, !R.inspired(ctx, c)); changed(c); }
     else if (a === 'leg') { remember(`Legendary action for ${who(c)}`); R.toggleSlot(c.res.leg, +b.dataset.p); changed(c); }
     renderTracker();
     if (S.sel?.id === c.id) renderInspector();
@@ -926,6 +1019,7 @@ async function onInspectClick(e) {
     case 'atkapply': applyAttack(c); break;
     case 'summon': return summonFor(c, b.dataset.k);
     case 'cast': castFor(c); break;
+    case 'dodge': case 'reckless': case 'help': case 'secondwind': case 'loh': doAction(c, a); break;
     case 'atkclear': S.atk.last = null; break;
     case 'rx': c.rx = !c.rx; changed(c); break;
     case 'leg': R.toggleSlot(c.res.leg, +b.dataset.p); changed(c); break;
@@ -1045,7 +1139,7 @@ async function loadFight(id) {
     const [name] = R.groupNames(S.enc, baseName(s.name), 1);
     const m = entries[i];
     const c = m ? monsterCombatant(m, s.ref.split(':')[1], name, rollHp, i, s.kind)
-      : { id: uid(), name, kind: s.kind, init: d20() + (+s.mod || 0), mod: +s.mod || 0, ac: +s.ac || 10, hp: +s.max || 1, max: +s.max || 1,
+      : { id: uid(), name, kind: s.kind, init: rollInit() + (+s.mod || 0), mod: +s.mod || 0, ac: +s.ac || 10, hp: +s.max || 1, max: +s.max || 1,
         temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100, rx: false, xp: +s.xp || 0 };
     if (s.notes) c.notes = s.notes;
     S.enc.c.push(c);
@@ -1101,7 +1195,7 @@ function onAddForm(e) {
   remember(`Add ${n > 1 ? n + '× ' : ''}${name}`);
   R.groupNames(S.enc, name, n).forEach((nm, i) => {
     const hp = Math.max(1, roll(hpStr).total);
-    S.enc.c.push({ id: uid(), name: nm, kind, init: initRaw !== '' ? parseInt(initRaw, 10) : d20() + md, mod: md,
+    S.enc.c.push({ id: uid(), name: nm, kind, init: initRaw !== '' ? parseInt(initRaw, 10) : rollInit() + md, mod: md,
       ac, hp, max: hp, temp: 0, exh: 0, conds: [], slots: blankSlots(), ds: { s: 0, f: 0 }, notes: '', seq: Date.now() + i / 100, xp });
   });
   const waiting = joined(S.enc.c.slice(-n));

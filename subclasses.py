@@ -122,7 +122,7 @@ def effects(sheet, cls, level, pb, mods):
            "init": 0, "attacks": [], "magic_weapon_ability": None, "melee_ability": None, "hp_per_level": 0,
            "spells": {}, "summons": [], "third_caster": None, "saves": [], "save_bonus": [], "scores": {}, "mark_die": None,
            "defenses": {"resist": [], "immune": [], "vuln": [], "condImmune": []}, "cdef": [], "ac_cond": [],
-           "dex_save_adv": None, "auras": []}
+           "dex_save_adv": None, "auras": [], "heroic_warrior": False}
     _features(CLASS_FEATURES.get(cls, []), level, choices, out["class_features"], out, v)
     out["class_spells"], out["spells"] = out["spells"], {}          # the class's always-prepared spells, shown apart
     sc = SUBCLASSES.get(sheet.get("subclass") or "")
@@ -170,6 +170,8 @@ def _collect(out, e, v, feature):
     if "ac_bonus" in e:
         b = e["ac_bonus"]
         out["ac_cond"].append({"needs": b["needs"], "ac": max(b.get("min", -99), v[b["add"]]) if b.get("add") else b["ac"], "from": feature})
+    if e.get("heroic_warrior"):
+        out["heroic_warrior"] = True
     if e.get("dex_save_adv"):
         out["dex_save_adv"] = feature
     if "aura" in e:
