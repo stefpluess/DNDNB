@@ -165,6 +165,16 @@ class OnTheSheet(unittest.TestCase):
         from collections import Counter
         self.assertEqual(Counter(v["source"] for v in CATALOG.values()), {"PHB 2024": 48, "PHB 2014": 40, "Tasha's": 30})
 
+    def test_older_versions_point_to_the_2024_one(self):
+        from subclass_data import SUPERSEDED
+        for old, new in SUPERSEDED.items():
+            self.assertIn(old, CATALOG)
+            self.assertEqual((CATALOG[new]["source"], CATALOG[new]["class"]), ("PHB 2024", CATALOG[old]["class"]), old)
+        d = rules.derive(char("ranger", 3, "fey-wanderer-tce"))
+        self.assertTrue([w for w in d["warnings"] if "has a 2024 version, Fey Wanderer (PHB 2024)" in w])
+        cat = {c["key"]: c for c in subclasses.catalog()}
+        self.assertEqual((cat["wildfire-tce"]["superseded_by"], cat["fey-wanderer-tce"]["superseded_by"]), (None, "fey-wanderer-2024"))
+
     def test_wrong_class_or_level_warns(self):
         self.assertTrue([w for w in rules.derive(char("wizard", 5, "champion-2024"))["warnings"] if "Fighter subclass" in w])
         self.assertTrue([w for w in rules.derive(char("fighter", 2, "champion-2024"))["warnings"] if "starts at" in w])

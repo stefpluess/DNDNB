@@ -62,7 +62,11 @@ function subclassFields(s) {
   const cls = (s.class_name || '').trim().toLowerCase();
   const list = S.meta.subclasses.filter(x => x.class === cls);
   const cur = S.meta.subclasses.find(x => x.key === s.subclass);
-  const opts = list.map(x => `<option value="${x.key}"${x.key === s.subclass ? ' selected' : ''}>${esc(x.name)} (${esc(x.source)})</option>`).join('');
+  // 2024 versions first; versions replaced by a 2024 one go under "Older versions"
+  const opt = x => `<option value="${x.key}"${x.key === s.subclass ? ' selected' : ''}>${esc(x.name)} (${esc(x.source)}${x.rules === '2014' && !x.superseded_by ? ', 2014 rules' : ''})</option>`;
+  const current = list.filter(x => !x.superseded_by), older = list.filter(x => x.superseded_by);
+  const opts = `<optgroup label="Current">${current.map(opt).join('')}</optgroup>`
+    + (older.length ? `<optgroup label="Older versions (replaced in 2024)">${older.map(opt).join('')}</optgroup>` : '');
   const stale = cur && cur.class !== cls ? `<option value="${cur.key}" selected>${esc(cur.name)} (${esc(cur.source)}, not ${esc(s.class_name || 'this class')})</option>` : '';
   const choices = (cur?.choices || []).map(c => `<label class="lbl-f">${esc(c.feature)} <small class="hint">level ${c.level}</small>
       <select class="field" data-path="choices.${esc(c.feature)}" data-type="opt"><option value="">Choose…</option>${c.options.map(o =>

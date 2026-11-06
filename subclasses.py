@@ -28,6 +28,7 @@ import re
 
 
 from subclass_data import CATALOG as SUBCLASSES  # the data, written with F() and S() from that module
+from subclass_data import SUPERSEDED
 
 
 # ---------- evaluating formulas ----------
@@ -68,7 +69,9 @@ def catalog():
     for key, sc in SUBCLASSES.items():
         choices = [{"feature": f["name"], "level": f["level"], "options": [{"key": k, "name": n} for k, n, *_ in f["options"]]}
                    for f in sc["features"] if f.get("options")]
-        out.append({"key": key, "class": sc["class"], "name": sc["name"], "source": sc["source"], "choices": choices})
+        new = SUPERSEDED.get(key)
+        out.append({"key": key, "class": sc["class"], "name": sc["name"], "source": sc["source"], "choices": choices,
+                    "superseded_by": new, "rules": "2024" if sc["source"] == "PHB 2024" else "2014"})
     return sorted(out, key=lambda s: (s["class"], s["name"], s["source"]))
 
 
@@ -93,6 +96,10 @@ def effects(sheet, cls, level, pb, mods):
     if sc["class"] != cls:
         out["warnings"].append(f"{sc['name']} is a {sc['class'].title()} subclass, but the class is {cls.title() or 'not set'}.")
         return out
+    new = SUPERSEDED.get(sheet["subclass"])
+    if new:
+        n = SUBCLASSES[new]
+        out["warnings"].append(f"Older version: {sc['name']} ({sc['source']}) has a 2024 version, {n['name']} ({n['source']}).")
     if level < sc["level"]:
         out["warnings"].append(f"{sc['name']} starts at {sc['class'].title()} level {sc['level']}.")
     for f in sc["features"]:
