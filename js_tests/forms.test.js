@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { convert, isTyping } from '../static/js/forms.js';
+import { convert, isTyping, savesWhileTyping } from '../static/js/forms.js';
 import { listAt, setPath } from '../static/js/util.js';
 
 /** A stand-in for a form field: just the properties convert() reads. */
@@ -41,4 +41,11 @@ test('dotted paths read and write nested data, including array items', () => {
   setPath(o, 'speed_all.fly', 60);
   assert.equal(listAt(o, 'actions.0._hb.dmg'), '2d6');
   assert.equal(o.speed_all.fly, 60);
+});
+
+test('data-commit text fields save on change, not while typing', () => {
+  const title = { value: 'Durnan', type: 'text', tagName: 'INPUT', dataset: { commit: '' } };
+  assert.equal(savesWhileTyping(title), false);
+  assert.equal(savesWhileTyping({ ...title, dataset: {} }), true);
+  assert.equal(convert(title), 'Durnan');
 });

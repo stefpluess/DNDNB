@@ -44,6 +44,21 @@ CREATE TABLE IF NOT EXISTS saved_encounters (
     data    TEXT NOT NULL,   -- {"creatures": [...]}: the foes and allies to add, without fight state
     updated TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS wiki_pages (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    title    TEXT NOT NULL,              -- unique among pages outside the trash (checked in wiki.py)
+    category TEXT NOT NULL DEFAULT 'unsorted',
+    body     TEXT NOT NULL DEFAULT '',   -- Markdown with [[Page title]] links
+    created  TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated  TEXT DEFAULT CURRENT_TIMESTAMP,
+    deleted  TEXT                        -- set when moved to the trash; NULL otherwise
+);
+CREATE TABLE IF NOT EXISTS wiki_links (
+    src    INTEGER NOT NULL,   -- the page the link is on
+    target TEXT NOT NULL,      -- the linked title, normalized (wiki.norm); the page may not exist yet
+    PRIMARY KEY (src, target)
+);
+CREATE INDEX IF NOT EXISTS wiki_links_target ON wiki_links(target);
 """
 
 

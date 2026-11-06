@@ -3,6 +3,7 @@
      Combat    library | tracker | inspector + roll log
      Party     characters | sheet editor | computed stats
      Bestiary  creatures | creature editor | live stat block
+     Wiki      categories and pages | page or editor | links and page info
    Sections below follow that order: tokens, base, controls, header, frames, then each view.
    Colors only come from the tokens; every token has a dark-mode value. */
 
@@ -106,6 +107,7 @@ button.chip:hover{border-color:var(--bad)}
 .combat{grid-template-columns:300px minmax(0,1fr) 420px}
 .party{grid-template-columns:240px minmax(0,1fr) 380px}
 .bestiary{grid-template-columns:240px minmax(0,1fr) 420px}
+.wiki{flex:1;min-height:0;display:grid;grid-template-columns:260px minmax(0,1fr) 300px}
 .panel-col{background:var(--surface);min-height:0;display:flex;flex-direction:column}
 .library,.charlist{border-right:1px solid var(--line)}
 .inspector,.derived{border-left:1px solid var(--line)}
@@ -388,6 +390,66 @@ pre.tbl{font-family:var(--mono);font-size:.75rem;overflow-x:auto;background:var(
 .features li.later{opacity:.5}
 .features .ftext{display:block;color:var(--muted)}
 
+/* ---------- wiki ---------- */
+.wikicats{display:flex;flex-direction:column;gap:1px;flex:none}
+.wikicats button{display:flex;justify-content:space-between;align-items:baseline;gap:8px;background:none;border:1px solid transparent;border-radius:var(--radius);padding:4px 10px;text-align:left;color:var(--muted)}
+.wikicats button:hover{color:var(--ink)}
+.wikicats button.on{background:var(--surface-2);border-color:var(--line);color:var(--ink);font-weight:700}
+.wikicats small{font-family:var(--mono);font-size:.75rem}
+.wikicats .todo small{color:var(--warn);font-weight:600}
+.wikinav #wikiList{border-top:1px solid var(--line);padding-top:6px}
+.wikinav #wikiList span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wikitrash{align-self:flex-start;color:var(--muted)}
+.wikitrash.on{color:var(--ink);font-weight:700}
+.wikipage{gap:14px}
+.wikihead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.wikihead .titles{display:flex;flex-direction:column;gap:2px;min-width:0}
+.wikihead .titles.grow{flex:1;gap:8px}
+.wikihead .titles>.link{align-self:flex-start;font-size:.82rem}
+.wikihead h1{font-family:var(--display);font-weight:700;font-size:1.9rem;line-height:1.15;overflow-wrap:anywhere}
+.wikihead .line{flex:none}
+.wikihead .wtitle{font-family:var(--display);font-weight:700;font-size:1.5rem;padding:4px 10px}
+.wikihead label.hint{display:flex;gap:8px;align-items:center}
+.wikihead label .field{width:auto}
+/* page text: comfortable reading width */
+.wikitext{max-width:46rem;font-size:1rem;line-height:1.55;overflow-wrap:break-word}
+.wikitext>:first-child{margin-top:0}
+.wikitext h2,.wikitext h3,.wikitext h4,.wikitext h5{font-family:var(--display);font-weight:700;margin:1.1em 0 .35em;line-height:1.2}
+.wikitext h2{font-size:1.4rem;border-bottom:1px solid var(--line);padding-bottom:3px}
+.wikitext h3{font-size:1.18rem}
+.wikitext h4,.wikitext h5{font-size:1.02rem;color:var(--muted)}
+.wikitext p,.wikitext ul,.wikitext ol,.wikitext table,.wikitext blockquote{margin:0 0 .8em}
+.wikitext ul,.wikitext ol{padding-left:1.4em}
+.wikitext li{margin:0 0 .2em}
+.wikitext li.task{list-style:none;margin-left:-1.2em}
+.wikitext li.task.done{color:var(--muted);text-decoration:line-through}
+.wikitext .box{font-family:var(--mono)}
+.wikitext blockquote{border-left:3px solid var(--accent);padding:2px 0 2px 12px;color:var(--muted);font-style:italic}
+.wikitext blockquote>:last-child{margin-bottom:0}
+.wikitext hr{border:0;border-top:1px solid var(--line);margin:1.2em 0}
+.wikitext code,.mdhelp code{font-family:var(--mono);font-size:.85em;background:var(--surface-2);border-radius:4px;padding:0 4px}
+.wikitext table{border-collapse:collapse;font-size:.93rem}
+.wikitext th,.wikitext td{border:1px solid var(--line);padding:4px 10px;text-align:left;vertical-align:top}
+.wikitext th{background:var(--surface-2);font-weight:700}
+.wikitext a{color:var(--accent)}
+/* wiki links: existing pages underlined lightly; missing ones dashed in the warning color */
+a.wl{color:var(--accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--accent) 40%,transparent)}
+a.wl:hover{border-bottom-color:var(--accent)}
+a.wl.missing{color:var(--warn);border-bottom:1px dashed var(--warn)}
+/* the editor: text and live preview side by side */
+.wikiedit{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;flex:1;min-height:24rem}
+.wikiedit .pane{position:relative;min-width:0;display:flex;flex-direction:column}
+.wikiedit textarea{flex:1;min-height:24rem;resize:none;font-family:var(--mono);font-size:.88rem;line-height:1.55;padding:10px 12px}
+.wikiedit .preview{border:1px dashed var(--line);border-radius:var(--radius);padding:10px 14px;max-width:none;min-height:24rem;overflow-y:auto}
+.suggest{position:absolute;z-index:5;list-style:none;margin:0;padding:4px 0;min-width:200px;max-width:320px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 10px 30px -12px var(--shadow)}
+.suggest li{padding:4px 12px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.92rem}
+.suggest li.on,.suggest li:hover{background:var(--surface-2)}
+.mdhelp{margin-top:-4px}
+.trashlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.trashlist li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
+.trashlist li>div{display:flex;flex-direction:column}
+.linklist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:.92rem}
+
 /* ---------- toast ---------- */
 #toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,20px);opacity:0;pointer-events:none;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:var(--radius-lg);font-weight:500;max-width:560px;box-shadow:0 10px 30px -12px var(--shadow);transition:.2s;z-index:20}
 #toast.show{opacity:1;transform:translate(-50%,0)}
@@ -397,6 +459,7 @@ pre.tbl{font-family:var(--mono);font-size:.75rem;overflow-x:auto;background:var(
   .combat{grid-template-columns:270px minmax(0,1fr) 350px}
   .party{grid-template-columns:200px minmax(0,1fr) 340px}
   .bestiary{grid-template-columns:200px minmax(0,1fr) 360px}
+  .wiki{grid-template-columns:220px minmax(0,1fr) 250px}
   #libTabs button{padding:4px 5px;font-size:.85rem}
   .cb{grid-template-columns:2.8rem minmax(0,1fr) 2.7rem 7rem 8.6rem;gap:10px}
   .quick .field{width:4.4rem}

@@ -15,6 +15,7 @@
     <button data-view="combat" class="on">Combat</button>
     <button data-view="party">Party</button>
     <button data-view="bestiary">Bestiary</button>
+    <button data-view="wiki">Wiki</button>
   </nav>
   <div class="dbstatus" id="dbStatus"></div>
 </header>
@@ -111,6 +112,19 @@
   </aside>
   <section class="sheet" id="monEditor"></section>
   <aside class="derived panel-col" id="monPreview"></aside>
+</div>
+
+<!-- ============ WIKI ============ -->
+<div id="view-wiki" class="wiki" hidden>
+  <aside class="charlist panel-col wikinav">
+    <button class="btn primary" id="newPage">New page</button>
+    <input class="field search" type="search" id="wikiSearch" placeholder="Search the wiki  ( / )" autocomplete="off" aria-label="Search the wiki">
+    <nav class="wikicats" id="wikiCats" aria-label="Categories"></nav>
+    <ul id="wikiList"></ul>
+    <button class="link wikitrash" id="wikiTrash">Trash</button>
+  </aside>
+  <section class="sheet wikipage" id="wikiPage"></section>
+  <aside class="derived panel-col" id="wikiSide"></aside>
 </div>
 
 <dialog id="summaryDlg" class="summary" aria-labelledby="summaryTitle"></dialog>

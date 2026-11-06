@@ -18,6 +18,7 @@ import db
 import homebrew
 import rules
 import summons
+import wiki
 
 STATIC_DIR = os.path.join(db.ROOT, "static")
 KINDS = {"monster", "spell", "equipment", "magic-item", "condition"}
@@ -317,6 +318,53 @@ def delete_saved(_req, _q, sid):
     return {"ok": True}
 
 
+# ---------- handlers: campaign wiki ----------
+
+def _wiki(fn, *args, **kw):
+    """Run a wiki function in a campaign session; its errors become API errors."""
+    try:
+        with db.campaign_session() as conn:
+            return fn(conn, *args, **kw)
+    except wiki.WikiError as e:
+        raise ApiError(str(e), e.status)
+
+
+def _page_fields(body):
+    return {k: body[k] for k in ("title", "category", "body") if k in body}
+
+
+def list_wiki(_req, _q):
+    return _wiki(wiki.list_pages)
+
+
+def search_wiki(_req, q):
+    return _wiki(wiki.search, q.get("q", [""])[0])
+
+
+def get_wiki(_req, _q, pid):
+    return _wiki(wiki.get_page, int(pid))
+
+
+def create_wiki(req, _q):
+    return _wiki(wiki.create_page, **_page_fields(req.json_body() or {}))
+
+
+def update_wiki(req, _q, pid):
+    return _wiki(wiki.update_page, int(pid), **_page_fields(req.json_body() or {}))
+
+
+def delete_wiki(_req, _q, pid):
+    return _wiki(wiki.trash_page, int(pid))
+
+
+def wiki_trash(_req, _q):
+    return _wiki(wiki.list_trash)
+
+
+def restore_wiki(_req, _q, pid):
+    return _wiki(wiki.restore_page, int(pid))
+
+
 ROUTES = [
     ("GET", r"/api/status", status),
     ("GET", r"/api/meta", meta),
@@ -340,6 +388,14 @@ ROUTES = [
     ("DELETE", r"/api/saved-encounters/(\d+)", delete_saved),
     ("GET", r"/api/encounter", get_encounter),
     ("PUT", r"/api/encounter", put_encounter),
+    ("GET", r"/api/wiki", list_wiki),
+    ("POST", r"/api/wiki", create_wiki),
+    ("GET", r"/api/wiki/search", search_wiki),
+    ("GET", r"/api/wiki/trash", wiki_trash),
+    ("GET", r"/api/wiki/(\d+)", get_wiki),
+    ("PUT", r"/api/wiki/(\d+)", update_wiki),
+    ("DELETE", r"/api/wiki/(\d+)", delete_wiki),
+    ("POST", r"/api/wiki/(\d+)/restore", restore_wiki),
 ]
 
 

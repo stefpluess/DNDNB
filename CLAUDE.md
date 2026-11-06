@@ -11,7 +11,7 @@ Desktop-first (wide screens, three columns). No phone layout needed.
 python import_srd.py      # once: downloads SRD 5.2 from Open5e into data/srd.db, ends with a sanity check
 python server.py --open   # starts the app (start.bat / start.sh do both)
 
-python -m unittest test_rules test_homebrew test_server   # Python tests
+python -m unittest test_rules test_homebrew test_server test_subclasses test_wiki   # Python tests
 node --test "js_tests/*.test.js"                          # front-end tests (Node is only needed for tests)
 ```
 Python 3.9+, standard library only. No pip packages, no build step.
@@ -25,6 +25,12 @@ In the browser console, `ledger.S` shows the app state and `ledger.combat` the c
 - Bestiary view: homebrew creature editor (new, or copied from an SRD monster), live stat block,
   auto-written 2024-style attack text.
 - PCs in combat share HP, slots and Exhaustion with their sheet.
+- Wiki view: campaign notes for the DM only (players never see the app). Markdown pages in categories
+  (Unsorted is the inbox), `[[Page title]]` / `[[Page title|text]]` links, "Linked from", renaming rewrites
+  links, search, a trash (nothing is erased). One campaign. Planned next, in order: images (upload, paste,
+  drag-and-drop, sizes, full-screen view, page portraits; files in `data/wiki_images/`); category info boxes,
+  tags, pages inside pages; links to characters/monsters/fights with Add to combat, an image gallery,
+  Markdown export.
 
 ## Layout
 Python (the server owns storage and all rules math for sheets and homebrew):
@@ -33,6 +39,8 @@ Python (the server owns storage and all rules math for sheets and homebrew):
   must be JSON objects
 - `rules.py`: character sheet math; `derive(sheet)`, `item_from_srd()`
 - `homebrew.py`: homebrew creatures; `normalize()` fills mods, saves, PB/XP from CR, attacks, auto text
+- `wiki.py`: wiki pages (`wiki_pages`), their links as normalized titles (`wiki_links`, so links to pages
+  that don't exist yet are kept), rename rewriting, search, soft delete (`deleted` column)
 - `common.py`: shared constants and formatting, served to the browser as `GET /api/meta`
 - `subclasses.py` + `subclass_data/`: the subclass engine and catalog; `summons.py`: summoned creatures
 - `import_srd.py`: Open5e importer; downloads everything before writing, never empties a category,
@@ -48,7 +56,8 @@ Front end, `static/js/` (plain ES modules, no framework):
   death saves, conditions, exhaustion, group naming)
 - `dice.js`, `autosave.js`, `forms.js`: dice parsing, ordered debounced saving, form binding
 - `history.js`: undo/redo stack used by the combat view
-- `tracker.js`, `party.js`, `bestiary.js`: the three views
+- `tracker.js`, `party.js`, `bestiary.js`, `wiki.js`: the four views
+- `markdown.js`: wiki page Markdown to HTML (escapes everything; link syntax matches `wiki.LINK`)
 - `statblock.js`, `sheetview.js`: stat blocks, spells, items, computed character stats
 - `ui.js`, `nav.js`, `util.js`: roll log, view switching, helpers (`esc`, `signed`, `setPath`, `toast`)
 
@@ -57,7 +66,8 @@ Front end, `static/js/` (plain ES modules, no framework):
   so one renderer, search and combat path serves both. Keep it that way.
 - Rules logic lives in testable code (`rules.py`, `homebrew.py`, `combat.js`), never in UI code.
   Add a test with every rules change.
-- Forms use `data-path` / `data-type` (num, numnull, opt) / `data-required` / `data-list` and
+- Forms use `data-path` / `data-type` (num, numnull, opt) / `data-required` / `data-list` / `data-commit`
+  (text saved on change, not while typing: for values with side effects like a wiki title) and
   `bindForm()` from `forms.js`. No new ad-hoc input handlers.
 - Saving goes through the autosavers in `store.js` (they keep saves to one thing in order).
 - Every combat action calls `remember(label)` in `tracker.js` right before it changes the fight, so Ctrl+Z can undo it.
