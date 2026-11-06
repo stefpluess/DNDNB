@@ -17,6 +17,7 @@ import common
 import db
 import homebrew
 import rules
+import summons
 
 STATIC_DIR = os.path.join(db.ROOT, "static")
 KINDS = {"monster", "spell", "equipment", "magic-item", "condition"}
@@ -80,6 +81,8 @@ def entry(_req, _q, kind, idx):
 
 
 def item_template(req, q, kind, idx):
+    if kind == "spell":
+        return rules.spell_from_srd(entry(req, q, kind, idx))
     return rules.item_from_srd(kind, entry(req, q, kind, idx))
 
 
@@ -119,14 +122,49 @@ def update_character(req, _q, cid):
     if body.get("apply_class_defaults"):
         rules.apply_class_defaults(sheet)
     if body.get("apply_slots"):
-        for slot, n in zip(sheet["slots"], rules.default_slots(sheet.get("class_name") or "", sheet.get("level") or 1)):
+        for slot, n in zip(sheet["slots"], rules.derive(sheet)["suggested_slots"]):
             slot["max"], slot["used"] = n, min(slot["used"], n)
+    report = None
+    if body.get("rest") == "long":
+        report = rules.long_rest(sheet)
+    elif body.get("rest") == "short":
+        report = rules.short_rest(sheet, int(body.get("hit_dice") or 0))
     with db.campaign_session() as conn:
         cur = conn.execute("UPDATE characters SET name=?, data=?, updated=CURRENT_TIMESTAMP WHERE id=?",
                            (sheet.get("name") or "Unnamed", db.dumps(sheet), cid))
         if cur.rowcount == 0:
             raise ApiError("Character not found.", 404)
-    return get_character(req, {}, cid)
+    out = get_character(req, {}, cid)
+    if report:
+        out["rest"] = report
+    return out
+
+
+def summon(req, _q, cid):
+    """Summon a subclass creature: returns it as a monster-shaped stat block, and spends the use it costs."""
+    body = req.json_body() or {}
+    key = body.get("key")
+    char = get_character(req, {}, cid)
+    sheet, derived = char["sheet"], char["derived"]
+    if key not in ((derived.get("subclass") or {}).get("summons") or []):
+        raise ApiError("This character can't summon that.")
+    info = summons.SUMMONS[key]
+    note, spent = "", False
+    cost = info["cost"]
+    if cost:
+        res = next((r for r in derived["resources"] if r["key"] == cost), None)
+        if res and res["used"] < res["max"]:
+            sheet["resources_used"][cost] = res["used"] + 1
+            spent = True
+            note = f"Spent one {res['name']}."
+        else:
+            note = "No free use left: spend a spell slot (or the use) by hand."
+    creature = summons.build(key, sheet, derived, body.get("form"))
+    creature["proficiency_bonus"] = derived["prof_bonus"]
+    if spent:
+        with db.campaign_session() as conn:
+            conn.execute("UPDATE characters SET data=?, updated=CURRENT_TIMESTAMP WHERE id=?", (db.dumps(sheet), cid))
+    return {"creature": creature, "note": note, "character": get_character(req, {}, cid)}
 
 
 def delete_character(_req, _q, cid):
@@ -199,6 +237,53 @@ def put_encounter(req, _q):
     return {"ok": True}
 
 
+# ---------- handlers: saved encounters (prepared fights) ----------
+
+SAVED_FIELDS = ("ref", "name", "kind", "hp", "max", "ac", "mod", "xp", "notes")
+
+
+def _clean_saved(body):
+    name = str(body.get("name") or "").strip()
+    if not name:
+        raise ApiError("Give the encounter a name.")
+    creatures = []
+    for c in body.get("creatures") or []:
+        if not isinstance(c, dict) or not str(c.get("name") or "").strip():
+            continue
+        creatures.append({k: c[k] for k in SAVED_FIELDS if k in c})
+    if not creatures:
+        raise ApiError("There are no foes or allies to save.")
+    return name[:120], {"creatures": creatures}
+
+
+def list_saved(_req, _q):
+    with db.campaign_session() as conn:
+        rows = conn.execute("SELECT id, name, data, updated FROM saved_encounters ORDER BY name COLLATE NOCASE").fetchall()
+    return [{"id": r["id"], "name": r["name"], "updated": r["updated"], **json.loads(r["data"])} for r in rows]
+
+
+def create_saved(req, _q):
+    name, data = _clean_saved(req.json_body() or {})
+    with db.campaign_session() as conn:
+        cur = conn.execute("INSERT INTO saved_encounters(name, data) VALUES (?, ?)", (name, db.dumps(data)))
+    return {"id": cur.lastrowid, "name": name, **data}
+
+
+def update_saved(req, _q, sid):
+    name, data = _clean_saved(req.json_body() or {})
+    with db.campaign_session() as conn:
+        cur = conn.execute("UPDATE saved_encounters SET name=?, data=?, updated=CURRENT_TIMESTAMP WHERE id=?", (name, db.dumps(data), int(sid)))
+        if cur.rowcount == 0:
+            raise ApiError("That saved encounter no longer exists.", 404)
+    return {"id": int(sid), "name": name, **data}
+
+
+def delete_saved(_req, _q, sid):
+    with db.campaign_session() as conn:
+        conn.execute("DELETE FROM saved_encounters WHERE id=?", (int(sid),))
+    return {"ok": True}
+
+
 ROUTES = [
     ("GET", r"/api/status", status),
     ("GET", r"/api/meta", meta),
@@ -210,11 +295,16 @@ ROUTES = [
     ("GET", r"/api/characters/(\d+)", get_character),
     ("PUT", r"/api/characters/(\d+)", update_character),
     ("DELETE", r"/api/characters/(\d+)", delete_character),
+    ("POST", r"/api/characters/(\d+)/summon", summon),
     ("GET", r"/api/homebrew", list_homebrew),
     ("POST", r"/api/homebrew", create_homebrew),
     ("GET", r"/api/homebrew/(hb-[\w-]+)", get_homebrew),
     ("PUT", r"/api/homebrew/(hb-[\w-]+)", update_homebrew),
     ("DELETE", r"/api/homebrew/(hb-[\w-]+)", delete_homebrew),
+    ("GET", r"/api/saved-encounters", list_saved),
+    ("POST", r"/api/saved-encounters", create_saved),
+    ("PUT", r"/api/saved-encounters/(\d+)", update_saved),
+    ("DELETE", r"/api/saved-encounters/(\d+)", delete_saved),
     ("GET", r"/api/encounter", get_encounter),
     ("PUT", r"/api/encounter", put_encounter),
 ]

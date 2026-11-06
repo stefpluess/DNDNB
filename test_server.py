@@ -116,6 +116,65 @@ class Search(TempData):
         self.assertEqual(server.entry(None, {}, "monster", made["idx"])["name"], "Grik")
 
 
+class SavedEncounters(TempData):
+    def test_round_trip_keeps_only_setup_fields(self):
+        made = server.create_saved(_Body({"name": " Goblin ambush ", "creatures": [
+            {"ref": "monster:goblin-warrior", "name": "Goblin Warrior", "kind": "foe", "xp": 50, "hp": 0, "conds": [{"n": "Prone"}]},
+            {"name": "", "kind": "foe"}]}), {})
+        self.assertEqual(made["name"], "Goblin ambush")
+        self.assertEqual(made["creatures"], [{"ref": "monster:goblin-warrior", "name": "Goblin Warrior", "kind": "foe", "xp": 50, "hp": 0}])
+        server.update_saved(_Body({"name": "Ambush", "creatures": made["creatures"] * 2}), {}, str(made["id"]))
+        listed = server.list_saved(None, {})
+        self.assertEqual([(e["name"], len(e["creatures"])) for e in listed], [("Ambush", 2)])
+        server.delete_saved(None, {}, str(made["id"]))
+        self.assertEqual(server.list_saved(None, {}), [])
+
+    def test_name_and_creatures_are_required(self):
+        with self.assertRaises(server.ApiError):
+            server.create_saved(_Body({"name": "", "creatures": [{"name": "Orc"}]}), {})
+        with self.assertRaises(server.ApiError):
+            server.create_saved(_Body({"name": "Empty", "creatures": []}), {})
+        with self.assertRaises(server.ApiError):
+            server.update_saved(_Body({"name": "Gone", "creatures": [{"name": "Orc"}]}), {}, "99")
+
+
+class Rests(TempData):
+    def test_short_rest_through_the_api(self):
+        made = server.create_character(_Body({"sheet": {"name": "Vex", "class_name": "Fighter", "level": 3, "max_hp": 28, "hp": 5}}), {})
+        sheet = made["sheet"]
+        out = server.update_character(_Body({"sheet": sheet, "rest": "short", "hit_dice": 2}), {}, made["id"])
+        self.assertEqual(out["rest"]["rest"], "short")
+        self.assertEqual(len(out["rest"]["rolls"]), 2)
+        self.assertEqual(out["sheet"]["hit_dice_used"], 2)
+        self.assertGreater(out["sheet"]["hp"], 5)
+        out = server.update_character(_Body({"sheet": out["sheet"], "rest": "long"}), {}, made["id"])
+        self.assertEqual((out["sheet"]["hp"], out["sheet"]["hit_dice_used"]), (28, 0))
+
+
+class Summons(TempData):
+    def test_wildfire_spirit_spends_a_wild_shape(self):
+        made = server.create_character(_Body({"sheet": {"name": "Ash", "class_name": "Druid", "level": 6, "subclass": "wildfire-tce",
+                                                        "abilities": {"wis": 16}}}), {})
+        out = server.summon(_Body({"key": "wildfire_spirit"}), {}, made["id"])
+        spirit = out["creature"]
+        self.assertEqual((spirit["hit_points"], spirit["armor_class"]), (5 + 5 * 6, 13))
+        seed = spirit["actions"][0]["attacks"][0]
+        self.assertEqual((seed["to_hit_mod"], seed["damage_bonus"]), (3 + 3, 3))     # spell attack +6, PB 3
+        self.assertEqual(out["character"]["sheet"]["resources_used"]["wild_shape"], 1)
+        with self.assertRaises(server.ApiError):
+            server.summon(_Body({"key": "steel_defender"}), {}, made["id"])
+
+    def test_cannon_forms_and_companion(self):
+        art = server.create_character(_Body({"sheet": {"name": "Bolt", "class_name": "Artificer", "level": 9, "subclass": "artillerist-tce",
+                                                       "abilities": {"int": 18}}}), {})
+        cannon = server.summon(_Body({"key": "eldritch_cannon", "form": "ballista"}), {}, art["id"])["creature"]
+        self.assertEqual((cannon["hit_points"], cannon["actions"][0]["attacks"][0]["damage_die_count"]), (45, 3))   # Explosive Cannon at 9
+        ranger = server.create_character(_Body({"sheet": {"name": "Rook", "class_name": "Ranger", "level": 5, "subclass": "beast-master-2024",
+                                                          "abilities": {"wis": 14}}}), {})
+        beast = server.summon(_Body({"key": "primal_companion", "form": "sky"}), {}, ranger["id"])["creature"]
+        self.assertEqual((beast["armor_class"], beast["hit_points"]), (15, 24))
+
+
 class _Body:
     """Stands in for the request handler: only json_body() is used by handlers."""
 

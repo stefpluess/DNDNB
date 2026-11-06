@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { doubleDice, roll } from '../static/js/dice.js';
+import { doubleDice, parseAmount, roll } from '../static/js/dice.js';
 
 /** A fake random source that returns the given die faces in order (for dice of size `faces`). */
 const faces = (size, ...values) => { let i = 0; return () => (values[i++ % values.length] - 1) / size; };
@@ -31,4 +31,17 @@ test('rejects invalid expressions instead of guessing', () => {
 test('critical hits double every dice group but not the modifier', () => {
   assert.equal(doubleDice('2d6+3'), '4d6+3');
   assert.equal(doubleDice('d8+1d6'), '2d8+2d6');
+});
+
+test('damage boxes take plain numbers, sums and dice', () => {
+  assert.deepEqual(parseAmount('12'), { total: 12, detail: '+ 12', rolled: false });
+  assert.equal(parseAmount('12+7').total, 19);
+  const r = parseAmount('2d6+3', faces(6, 4, 5));
+  assert.deepEqual([r.total, r.rolled], [12, true]);
+  for (const bad of ['', '0', '3-5', 'lots']) assert.equal(parseAmount(bad), null, bad);
+});
+
+test('a minimum per die (Great Weapon Fighting)', () => {
+  const r = roll('2d6+3', faces(6, 1, 5), { min: 3 });
+  assert.deepEqual([r.total, r.detail], [11, '[1→3,5] + 3']);
 });

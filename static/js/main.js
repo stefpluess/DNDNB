@@ -5,7 +5,7 @@ import { initBestiary, showBestiary } from './bestiary.js';
 import { registerView, switchView } from './nav.js';
 import { initParty, showParty } from './party.js';
 import { S, api, ctx } from './store.js';
-import { initCombat, showCombat, stepTurn } from './tracker.js';
+import { initCombat, showCombat, stepTurn, undo } from './tracker.js';
 import { logEntries } from './ui.js';
 import { $, toast } from './util.js';
 
@@ -32,7 +32,14 @@ async function loadState() {
 
 function initKeyboard() {
   document.addEventListener('keydown', e => {
-    if (S.view !== 'combat' || e.target.closest('input,textarea,select') || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (S.view !== 'combat') return;
+    // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y undo and redo fight changes; inside a text box they keep their usual meaning
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (k === 'z' || k === 'y') && !e.target.closest('input:not([type=checkbox]),textarea')) {
+      e.preventDefault();
+      return undo(k === 'y' || e.shiftKey ? 1 : -1);
+    }
+    if (e.target.closest('input,textarea,select') || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === 'n' || e.key === 'N') { e.preventDefault(); stepTurn(1); }
     if (e.key === 'p' || e.key === 'P') { e.preventDefault(); stepTurn(-1); }
     if (e.key === '/') { e.preventDefault(); $('#libSearch').focus(); }

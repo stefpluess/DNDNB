@@ -6,7 +6,7 @@ import { toast } from './util.js';
 export const S = {
   meta: null,                 // lists from /api/meta: abilities, skills, classes, conditions, ...
   srdCounts: {},
-  enc: { round: 1, active: null, skip: true, c: [], ticks: [] },
+  enc: { round: 1, active: null, acted: [], skip: true, c: [], ticks: [], prompts: [] },
   chars: new Map(),           // id -> { id, sheet, derived }
   entryCache: new Map(),      // "kind:idx" -> reference entry
   view: 'combat',
@@ -14,13 +14,20 @@ export const S = {
   sel: null,                  // { type: 'c', id } | { type: 'entry', kind, idx } | { type: 'char', id }
   libKind: 'monster',
   editingSlots: new Set(),    // combatant ids with the slot editor open (UI only, never saved)
+  targets: new Map(),         // combatant id -> { half, mod }: ticked for area damage (UI only, never saved)
+  groupAmt: '',               // what's typed in the area damage box
+  group: { type: '', ab: '', dc: '', onSave: 'half' },   // area damage: damage type and saving throw
+  atk: { target: {}, mode: {}, cover: {}, last: null },
+  castSpell: "Hunter's Mark",  // the spell picked in the inspector's Cast block
+  condMoreOpen: false,        // the "concentration and repeated saves" options are open   // attacks: target and roll mode per attacker id, last attack result (UI only)
   // party view
   currentChar: null,
   // bestiary view
   monList: [],
   curMon: null,               // { idx, data }
   // two-step confirmations ("click again to …")
-  confirm: { del: null, clear: false, delChar: null, delMon: null },
+  confirm: { del: null, clear: false, delChar: null, delMon: null, delFight: null },
+  saved: [],                  // saved encounters, as last loaded
 };
 
 export async function api(path, opts = {}) {
@@ -82,6 +89,24 @@ function charSaver(id) {
   }
   return charSavers.get(id);
 }
+/**
+ * A resource pip (data-res, data-p) or pool box (data-respool) on a sheet changed: update
+ * sheet.resources_used and save. Returns true if the event was one of those.
+ */
+export function onResourceEvent(e, ch) {
+  const pip = e.target.closest('[data-res]'), pool = e.target.closest('[data-respool]');
+  if (!ch || !(pip || pool)) return false;
+  const key = (pip || pool).dataset.res || pool.dataset.respool;
+  const r = ch.derived.resources.find(x => x.key === key);
+  if (!r) return false;
+  const used = ch.sheet.resources_used ||= {};
+  if (pip) { const p = +pip.dataset.p; used[key] = p < r.max - r.used ? r.used + 1 : Math.max(0, r.used - 1); }
+  else used[key] = Math.max(0, Math.min(r.max, r.max - (parseInt(pool.value, 10) || 0)));
+  r.used = used[key];
+  charSaver(ch.id).schedule();
+  return true;
+}
+
 /** Save a character after typing pauses. */
 export const scheduleCharSave = id => charSaver(id).schedule();
 /** Save now, optionally asking the server to apply something ({ apply_class_defaults: true }). */
