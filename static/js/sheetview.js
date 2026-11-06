@@ -7,13 +7,16 @@ import { esc, label, plusMinus, signed } from './util.js';
 const UP = a => a.toUpperCase();
 
 /** "Dwarf Fighter 5", or "Level 5" when race and class are empty. */
-export const classLine = s =>
-  [s.race, s.class_name && `${s.class_name} ${s.level}`].filter(Boolean).join(' ') || `Level ${s.level}`;
+export const classLine = s => {
+  const classes = [s.class_name && `${s.class_name} ${s.level}`, ...(s.multiclass || []).filter(m => m.class_name && m.level > 0).map(m => `${m.class_name} ${m.level}`)];
+  return [s.race, classes.filter(Boolean).join(' / ')].filter(Boolean).join(' ') || `Level ${s.level}`;
+};
 
 const RECOVER = { long: 'back on a Long Rest', short: 'back on a Short or Long Rest', short1: 'one back on a Short Rest, all on a Long Rest' };
 /** Hit Dice and class resources. Pips (data-res, data-p) spend or restore a use; big pools take a number. */
 function resourcesHtml(d) {
-  const hd = d.hit_dice?.die ? `<span class="hint">Hit Dice: ${d.hit_dice.left} of ${d.hit_dice.total} d${d.hit_dice.die} left</span>` : '';
+  const pools = d.hit_dice?.pools || [];
+  const hd = pools.length ? `<span class="hint">Hit Dice left: ${pools.map(p => `${p.left}/${p.total} d${p.die}`).join(' + ')}</span>` : '';
   if (!d.resources?.length) return hd ? `<div class="blk"><h4>Resources ${hd}</h4></div>` : '';
   const rows = d.resources.map(r => `<div class="resline"><span title="${esc(RECOVER[r.recover])}">${esc(r.name)}</span>${r.pool
     ? `<label class="hint"><input class="field tiny" type="number" min="0" max="${r.max}" data-respool="${r.key}" value="${r.max - r.used}" aria-label="${esc(r.name)} left"> of ${r.max} left</label>`
@@ -36,7 +39,7 @@ function spellsHtml(d, name, roll) {
 }
 
 /** Feature list items: gained ones in full, later ones dimmed; choices still to make are flagged. */
-const featureItems = list => list.map(f => `<li class="${f.gained ? '' : 'later'}"><b>${esc(f.name)}</b> <small class="hint">level ${f.level}</small>
+const featureItems = list => list.map(f => `<li class="${f.gained ? '' : 'later'}"><b>${esc(f.name)}</b> <small class="hint">${f.class ? `${esc(f.class)} ` : ''}level ${f.level}</small>
       ${f.choice ? `<span class="tag-s">${esc(f.choice)}</span>` : ''}${f.needs_choice && f.gained ? '<span class="dis">choose on the sheet</span>' : ''}
       <span class="ftext">${esc(f.choice_text || f.text)}</span></li>`).join('');
 const spellLine = spells => Object.entries(spells || {}).map(([lv, names]) => `${lv}: ${names.map(esc).join(', ')}`).join(' · ');
@@ -49,10 +52,11 @@ function classFeaturesHtml(d, compact) {
   return `<div class="blk"><h4>Class features <span class="hint">${esc(d.class_source)}</span></h4><details${compact ? '' : ' open'}><summary class="hint">Level 1–20</summary>${body}</details></div>`;
 }
 
-/** The subclass's features by level. */
+/** Each class's subclass and its features by level. */
 function subclassHtml(d, compact) {
-  const sc = d.subclass;
-  if (!sc) return '';
+  return (d.subclasses || []).map(sc => oneSubclassHtml(sc, compact)).join('');
+}
+function oneSubclassHtml(sc, compact) {
   const feats = featureItems(sc.features);
   const spells = Object.entries(sc.spells || {}).map(([lv, names]) => `${lv}: ${names.map(esc).join(', ')}`).join(' · ');
   const body = `<ul class="features">${feats}</ul>

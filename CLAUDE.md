@@ -105,13 +105,19 @@ Front end, `static/js/` (plain ES modules, no framework):
 - Spell effects in combat (`SPELL_EFFECTS` in combat.js): Hunter's Mark, Hex (marks add damage to the
   caster's hits and can be moved), Bless, Bane, Shield of Faith, Haste, Shield, Divine Favor.
 - Artificer (Tasha's) is supported as a class.
-- Not modeled: multiclassing, feats, subclasses from other books.
+- Species, backgrounds and feats (2024 PHB) in `subclass_data/origins.py`, through the same engine. Ability
+  score increases from backgrounds and feats are typed into the scores, never added automatically.
+- Multiclassing: `sheet.multiclass` = extra classes [{class_name, level, subclass}]; `class_list()` in
+  rules.py. Proficiency bonus, cantrips and species use the total level; class features, resources and
+  subclasses their class's level; 2024 multiclass spell slot table (+ Pact slots); Hit Dice pools.
+- Combat statuses (`STATUS`), auras, cover, Weapon Mastery (`MASTERY`), Cunning Strike (`CUNNING`) and
+  Stunning Strike are in combat.js; spells on the sheet (`spell_rows` in rules.py) with cantrip scaling.
+- Not modeled: subclasses from books other than PHB 2014/2024 and Tasha's.
 
 ## Next steps, in order
 1. Run `python import_srd.py` on the live data and fix whatever the sanity check reports.
 2. Server hardening: check the Origin/Host header on API requests so a website open in the
    same browser can't call the local server.
-3. Ideas not chosen yet: per-character prepared spells, multiclassing, a desktop window
-   (Tauri or Electron around the same code).
+3. Ideas not chosen yet: a desktop window (Tauri or Electron around the same code).
 
-Limits: SRD 5.2 content only (not the full Monster Manual), single-class characters.
+Limits: SRD 5.2 monsters only (not the full Monster Manual).

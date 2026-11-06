@@ -87,29 +87,47 @@ function featsHtml(s) {
 }
 
 /** The subclass picker (subclasses of the sheet's class, every edition) and the choices it asks for. */
+/** <option>s for a class's subclasses: 2024 versions first, versions replaced in 2024 under "Older versions". */
+function subclassOptions(className, chosen) {
+  const cls = (className || '').trim().toLowerCase();
+  const list = S.meta.subclasses.filter(x => x.class === cls);
+  const cur = S.meta.subclasses.find(x => x.key === chosen);
+  const opt = x => `<option value="${x.key}"${x.key === chosen ? ' selected' : ''}>${esc(x.name)} (${esc(x.source)}${x.rules === '2014' && !x.superseded_by ? ', 2014 rules' : ''})</option>`;
+  const current = list.filter(x => !x.superseded_by), older = list.filter(x => x.superseded_by);
+  const stale = cur && cur.class !== cls ? `<option value="${cur.key}" selected>${esc(cur.name)} (${esc(cur.source)}, not ${esc(className || 'this class')})</option>` : '';
+  return `<option value="">${list.length ? 'None yet' : cls ? 'No subclasses for this class' : 'Set a class first'}</option>${stale}`
+    + `<optgroup label="Current">${current.map(opt).join('')}</optgroup>`
+    + (older.length ? `<optgroup label="Older versions (replaced in 2024)">${older.map(opt).join('')}</optgroup>` : '');
+}
+
+/** Extra classes (multiclassing): class, level and subclass each. */
+function multiclassHtml(s) {
+  const rows = (s.multiclass || []).map((mc, i) => `<div class="line mc">
+      <label class="lbl-f">Class <input class="field" data-path="multiclass.${i}.class_name" value="${esc(mc.class_name || '')}" list="classList"></label>
+      <label class="lbl-f">Level <input class="field tiny" type="number" min="1" max="20" data-path="multiclass.${i}.level" data-type="num" value="${mc.level || 1}"></label>
+      <label class="lbl-f">Subclass <select class="field" data-path="multiclass.${i}.subclass" data-type="opt">${subclassOptions(mc.class_name, mc.subclass)}</select></label>
+      <button class="link" data-rmclass="${i}">Remove</button></div>`).join('');
+  return `<div class="blk"><h4>Multiclass <button class="link" data-sa="addclass">Add a class</button></h4>${rows
+    || '<p class="hint">One class. Add a class to multiclass: the Level above is your first class\'s level; proficiency bonus uses the total.</p>'}</div>`;
+}
+
 function subclassFields(s) {
   const cls = (s.class_name || '').trim().toLowerCase();
-  const list = S.meta.subclasses.filter(x => x.class === cls);
   const cur = S.meta.subclasses.find(x => x.key === s.subclass);
-  // 2024 versions first; versions replaced by a 2024 one go under "Older versions"
-  const opt = x => `<option value="${x.key}"${x.key === s.subclass ? ' selected' : ''}>${esc(x.name)} (${esc(x.source)}${x.rules === '2014' && !x.superseded_by ? ', 2014 rules' : ''})</option>`;
-  const current = list.filter(x => !x.superseded_by), older = list.filter(x => x.superseded_by);
-  const opts = `<optgroup label="Current">${current.map(opt).join('')}</optgroup>`
-    + (older.length ? `<optgroup label="Older versions (replaced in 2024)">${older.map(opt).join('')}</optgroup>` : '');
-  const stale = cur && cur.class !== cls ? `<option value="${cur.key}" selected>${esc(cur.name)} (${esc(cur.source)}, not ${esc(s.class_name || 'this class')})</option>` : '';
+  const extra = (s.multiclass || []).map(mc => ({ cls: (mc.class_name || '').trim().toLowerCase(), sub: S.meta.subclasses.find(x => x.key === mc.subclass) }));
   const O = S.meta.origins;
   const originChoices = [...(O.species.find(x => x.key === s.species)?.choices || []),
     ...O.feats.filter(f => featKeys(s).includes(f.key)).flatMap(f => f.choices)];
   const picked = f => { const v = (s.choices || {})[f]; return Array.isArray(v) ? v : v ? [v] : []; };
-  const choices = [...(S.meta.class_choices[cls] || []), ...(cur?.choices || []), ...originChoices].map(c => c.multi
+  const choices = [...(S.meta.class_choices[cls] || []), ...(cur?.choices || []),
+    ...extra.flatMap(x => [...(S.meta.class_choices[x.cls] || []), ...(x.sub?.choices || [])]), ...originChoices].map(c => c.multi
     // several picks (Eldritch Invocations): a checkbox list
     ? `<details class="lbl-f multi"><summary>${esc(c.feature)} <small class="hint">${picked(c.feature).length} picked</small></summary><div class="checks">${c.options.map(o =>
         `<label><input type="checkbox" data-list="choices.${esc(c.feature)}" value="${o.key}"${picked(c.feature).includes(o.key) ? ' checked' : ''}> ${esc(o.name)}</label>`).join('')}</div></details>`
     : `<label class="lbl-f">${esc(c.feature)} <small class="hint">level ${c.level}</small>
       <select class="field" data-path="choices.${esc(c.feature)}" data-type="opt"><option value="">Choose…</option>${c.options.map(o =>
         `<option value="${o.key}"${picked(c.feature)[0] === o.key ? ' selected' : ''}>${esc(o.name)}</option>`).join('')}</select></label>`).join('');
-  return `${originFields(s)}<label class="lbl-f">Subclass <select class="field" data-path="subclass" data-type="opt" id="f-subclass">
-      <option value="">${list.length ? 'None yet' : cls ? 'No subclasses for this class' : 'Set a class first'}</option>${stale}${opts}</select></label>${choices}`;
+  return `${originFields(s)}<label class="lbl-f">Subclass <select class="field" data-path="subclass" data-type="opt" id="f-subclass">${subclassOptions(s.class_name, s.subclass)}</select></label>${choices}`;
 }
 
 /** The spell list: prepared box, name, level, attack or save, damage dice and type (filled in from the SRD). */
@@ -147,7 +165,7 @@ function renderSheet() {
       <label class="lbl-f">Name ${txt('name', s.name, 'data-required')}</label><label class="lbl-f">Player ${txt('player', s.player)}</label>
       <label class="lbl-f">Race ${txt('race', s.race)}</label><label class="lbl-f">Class ${txt('class_name', s.class_name, 'list="classList"')}</label>
       ${subclassFields(s)}
-      <label class="lbl-f">Level ${num('level', s.level, 'min="1" max="20"')}</label><label class="lbl-f">Max HP ${num('max_hp', s.max_hp, 'min="1"')}</label>
+      <label class="lbl-f">Level (first class) ${num('level', s.level, 'min="1" max="20"')}</label><label class="lbl-f">Max HP ${num('max_hp', s.max_hp, 'min="1"')}</label>
       <label class="lbl-f">Current HP ${num('hp', s.hp, 'min="0"')}</label><label class="lbl-f">Temp HP ${num('temp_hp', s.temp_hp, 'min="0"')}</label>
       <label class="lbl-f">Speed ${num('speed', s.speed)}</label><label class="lbl-f">Other AC bonus ${num('ac_misc', s.ac_misc)}</label>
       <label class="lbl-f">Initiative bonus ${num('init_misc', s.init_misc)}</label><label class="lbl-f">Exhaustion (0–6) ${num('exhaustion', s.exhaustion || 0, 'min="0" max="6"')}</label>
@@ -169,6 +187,7 @@ function renderSheet() {
       <label class="grow">Others <input class="field" id="f-otherweapons" data-special="otherweapons" value="${esc(p.weapons.filter(w => !BASE_WEAPONS.includes(w)).join(', '))}" placeholder="rapier, hand-crossbow"></label></div></div>
     <div class="blk"><h4>Skills <span class="hint">second box is expertise</span></h4><div class="skillgrid">${Object.entries(S.meta.skills).map(([k, a]) =>
       `<label><input type="checkbox" data-list="prof.skills" value="${k}" ${p.skills.includes(k) ? 'checked' : ''} aria-label="${label(k)} proficiency"><input type="checkbox" data-list="prof.expertise" value="${k}" ${p.expertise.includes(k) ? 'checked' : ''} aria-label="${label(k)} expertise"> ${label(k)}<span class="ab">${UP(a)}</span></label>`).join('')}</div></div>
+    ${multiclassHtml(s)}
     ${featsHtml(s)}
     <div class="blk"><h4>Fighting style</h4><div class="checks">${S.meta.fighting_styles.map(f => chk('styles', f, label(f) + (['great_weapon', 'thrown_weapon', 'two_weapon', 'unarmed'].includes(f) ? ' Fighting' : ''))).join('')}</div></div>
   </div>
@@ -200,6 +219,10 @@ async function onSheetAction(a, ch) {
     case 'slots':
       await charOp(ch.id, { apply_slots: true });
       return toast('Spell slots set from the class table.');
+    case 'addclass':
+      ch.sheet.multiclass = [...(ch.sheet.multiclass || []), { class_name: '', level: 1, subclass: '' }];
+      renderSheet();
+      return charOp(ch.id);
     case 'customspell':
       ch.sheet.spells = [...(ch.sheet.spells || []), { uid: uid(), name: 'New spell', level: 0, prepared: true, attack: false, save: '', dice: '', type: '', notes: '' }];
       renderSheet();
@@ -259,12 +282,16 @@ export function initParty() {
       scheduleCharSave(ch.id);
       if (['name', 'class_name', 'level', 'race'].includes(path)) renderCharList();
       // the subclass list follows the class, and a subclass brings its own choices
-      if (phase === 'change' && ['class_name', 'subclass', 'species', 'background'].includes(path)) renderSheet();
+      if (phase === 'change' && (['class_name', 'subclass', 'species', 'background'].includes(path) || /^multiclass\.\d+\.(class_name|subclass|level)$/.test(path))) {
+        renderSheet(); renderCharList();
+      }
       if (/\.attune$/.test(path)) renderSheet();
     },
   });
   $('#sheet').addEventListener('change', e => {
     const ch = current();
+    // a class typed in (main or multiclass): its subclass list and choices change, so redraw once typing is done
+    if (ch && /^(class_name|multiclass\.\d+\.class_name)$/.test(e.target.dataset.path || '')) { renderSheet(); renderCharList(); return; }
     if (ch && e.target.id === 'addFeat' && e.target.value) {
       ch.sheet.feats = [...new Set([...(ch.sheet.feats || []), e.target.value])];
       renderSheet();
@@ -279,6 +306,8 @@ export function initParty() {
   $('#sheet').addEventListener('click', async e => {
     const ch = current();
     if (!ch) return;
+    const rc = e.target.closest('[data-rmclass]');
+    if (rc) { ch.sheet.multiclass.splice(+rc.dataset.rmclass, 1); renderSheet(); renderCharList(); return charOp(ch.id); }
     const rs = e.target.closest('[data-rmspell]');
     if (rs) { ch.sheet.spells.splice(+rs.dataset.rmspell, 1); renderSheet(); return charOp(ch.id); }
     const addSp = e.target.closest('[data-addspell]');

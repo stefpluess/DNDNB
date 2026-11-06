@@ -9,11 +9,11 @@ Companion especially).
 from common import ABILITY_LONG, mod
 
 SUMMONS = {
-    "wildfire_spirit": {"name": "Wildfire Spirit", "cost": "wild_shape", "forms": None},
-    "steel_defender": {"name": "Steel Defender", "cost": None, "forms": None},
-    "eldritch_cannon": {"name": "Eldritch Cannon", "cost": "eldritch_cannon",
+    "wildfire_spirit": {"name": "Wildfire Spirit", "cost": "wild_shape", "forms": None, "class": "druid"},
+    "steel_defender": {"name": "Steel Defender", "cost": None, "forms": None, "class": "artificer"},
+    "eldritch_cannon": {"name": "Eldritch Cannon", "cost": "eldritch_cannon", "class": "artificer",
                         "forms": [("flamethrower", "Flamethrower"), ("ballista", "Force Ballista"), ("protector", "Protector")]},
-    "primal_companion": {"name": "Primal Companion", "cost": None,
+    "primal_companion": {"name": "Primal Companion", "cost": None, "class": "ranger",
                          "forms": [("land", "Beast of the Land"), ("sea", "Beast of the Sea"), ("sky", "Beast of the Sky")]},
 }
 
@@ -50,7 +50,8 @@ def _act(name, desc, action_type="ACTION"):
 
 
 def build(key, sheet, derived, form=None):
-    level = int(sheet.get("level") or 1)
+    # numbers scale with the summoner's level in the class the subclass belongs to (multiclassing)
+    level = (derived.get("class_levels") or {}).get(SUMMONS[key]["class"]) or int(sheet.get("level") or 1)
     pb = derived["prof_bonus"]
     m = derived["mods"]
     spell_atk = (derived.get("spell") or {}).get("attack", pb + m["int"])

@@ -574,7 +574,7 @@ function hitOptionsHtml(c, t, last) {
   const ms = x.mastery && R.MASTERY[x.mastery];
   if (ms?.on === 'hit') out.push(`<label class="hint" title="${esc(ms.note)}"><input type="checkbox" id="atkMastery" checked> Weapon Mastery: ${esc(x.mastery)} (${esc(ms.note)}${ms.save ? ` DC ${x.dc}` : ''})</label>`);
   if (x.sneak && d?.cunning_dc) {
-    const opts = Object.entries(R.CUNNING).filter(([, cs]) => d.level >= cs.from && parseInt(x.sneak, 10) >= cs.cost);
+    const opts = Object.entries(R.CUNNING).filter(([, cs]) => (d.class_levels?.rogue || 0) >= cs.from && parseInt(x.sneak, 10) >= cs.cost);
     out.push(`<label class="hint">Cunning Strike <select class="field" id="atkCunning"><option value="">none</option>${opts.map(([k, cs]) =>
       `<option value="${k}" title="${esc(cs.text)}">${cs.name} (−${cs.cost}d6)</option>`).join('')}</select> <small>DC ${d.cunning_dc}, with Sneak Attack</small></label>`);
   }
@@ -712,7 +712,7 @@ function doAction(c, a) {
   if (a === 'secondwind') {
     const r = res('second_wind');
     if (!r || r.used >= r.max) return toast('No Second Wind left.');
-    const heal = roll(`1d10+${ch.derived.level}`);
+    const heal = roll(`1d10+${ch.derived.class_levels?.fighter || ch.derived.level}`);
     remember(`${who(c)}: Second Wind`);
     spend('second_wind');
     pushLog(`${who(c)} · Second Wind`, heal);

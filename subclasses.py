@@ -121,49 +121,80 @@ def _features(fs, level, choices, out_list, out, v):
                 _collect(out, eff, v, f["name"])
 
 
-def effects(sheet, cls, level, pb, mods):
-    """What the character's class features and subclass give at its level.
+def _blank():
+    return {"key": None, "name": None, "source": None, "features": [], "class_features": [], "warnings": [],
+            "armor": [], "weapons": [], "ac_unarmored": [], "crit": 20, "resources": [], "riders": [], "checks": [],
+            "init": 0, "attacks": [], "magic_weapon_ability": None, "melee_ability": None, "hp_per_level": 0,
+            "spells": {}, "summons": [], "third_caster": None, "saves": [], "save_bonus": [], "scores": {}, "mark_die": None,
+            "defenses": {"resist": [], "immune": [], "vuln": [], "condImmune": []}, "cdef": [], "ac_cond": [],
+            "dex_save_adv": None, "auras": [], "heroic_warrior": False, "origin_features": [],
+            "save_adv": [], "unarmed_die": None, "dr": [], "medium_dex_cap": None, "ignore_cover": False, "cheat_death": [],
+            "long_rest_inspiration": False, "cantrip_bonus": None, "eb_bonus": None,
+            "class_spells": {}, "origin_spells": {}, "subclasses": []}
 
-    Always returns a dict: `key`, `name`, `source` describe the subclass (None without one), `features`
-    are the subclass's features and `class_features` the class's, for display; the rest are the collected
-    effects: armor, weapons, ac_unarmored, crit, resources, riders, checks, init, speed_rules, attacks,
-    magic_weapon_ability, melee_ability, hp_per_level, spells, summons, third_caster, saves, save_bonus,
-    scores, mark_die, warnings.
+
+def effects(sheet, cls, level, pb, mods, classes=None):
+    """What the character's classes, subclasses, species and feats give.
+
+    `classes` lists [{"cls", "level", "subclass"}] (the main class first, for multiclassing); without it the
+    sheet's single class at `level` is used. Class features and subclasses use each class's own level;
+    species traits use the character level (the total). Always returns a dict: `key`, `name`, `source`
+    describe the main class's subclass (None without one), `features` its features, `subclasses` every
+    class's subclass, `class_features` the classes' features (tagged with the class); the rest are the
+    collected effects (see the module docstring).
     """
-    v = values(level, pb, mods)
+    classes = classes or [{"cls": cls, "level": level, "subclass": sheet.get("subclass") or ""}]
+    total = sum(c["level"] for c in classes)
     choices = sheet.get("choices") or {}
-    out = {"key": None, "name": None, "source": None, "features": [], "class_features": [], "warnings": [],
-           "armor": [], "weapons": [], "ac_unarmored": [], "crit": 20, "resources": [], "riders": [], "checks": [],
-           "init": 0, "attacks": [], "magic_weapon_ability": None, "melee_ability": None, "hp_per_level": 0,
-           "spells": {}, "summons": [], "third_caster": None, "saves": [], "save_bonus": [], "scores": {}, "mark_die": None,
-           "defenses": {"resist": [], "immune": [], "vuln": [], "condImmune": []}, "cdef": [], "ac_cond": [],
-           "dex_save_adv": None, "auras": [], "heroic_warrior": False, "origin_features": [],
-           "save_adv": [], "unarmed_die": None, "dr": [], "medium_dex_cap": None, "ignore_cover": False, "cheat_death": [],
-           "long_rest_inspiration": False, "cantrip_bonus": None, "eb_bonus": None}
-    _features(CLASS_FEATURES.get(cls, []), level, choices, out["class_features"], out, v)
-    out["class_spells"], out["spells"] = out["spells"], {}          # the class's always-prepared spells, shown apart
-    # species, then the background's Origin feat and the chosen feats (character level gates species traits)
+    out = _blank()
+    for i, c in enumerate(classes):
+        v = values(c["level"], pb, mods)
+        before = len(out["class_features"])
+        _features(CLASS_FEATURES.get(c["cls"], []), c["level"], choices, out["class_features"], out, v)
+        for f in out["class_features"][before:]:
+            f["class"] = c["cls"].title()
+        for lv, names in out["spells"].items():
+            out["class_spells"].setdefault(lv, []).extend(names)
+        out["spells"] = {}
+        sub = _subclass(sheet, c, choices, out, v)
+        if sub:
+            out["subclasses"].append(sub)
+            if i == 0:
+                out.update(key=sub["key"], name=sub["name"], source=sub["source"], features=sub["features"])
+    # species, then the background's Origin feat and the chosen feats (the character level gates species traits)
+    v = values(total, pb, mods)
+    sub_spells, out["spells"] = out["spells"], {}
     sp = SPECIES.get(sheet.get("species") or "")
     if sp:
-        _features(sp[1], level, choices, out["origin_features"], out, v)
+        _features(sp[1], total, choices, out["origin_features"], out, v)
     for key in feat_keys(sheet):
-        _features(FEATS[key][2], level, choices, out["origin_features"], out, v)
-    out["origin_spells"], out["spells"] = out["spells"], {}
-    sc = SUBCLASSES.get(sheet.get("subclass") or "")
+        _features(FEATS[key][2], total, choices, out["origin_features"], out, v)
+    out["origin_spells"], out["spells"] = out["spells"], sub_spells
+    return out
+
+
+def _subclass(sheet, c, choices, out, v):
+    """Run one class's subclass; returns its display dict (or None without a known subclass)."""
+    key = c.get("subclass") or ""
+    sc = SUBCLASSES.get(key)
     if not sc:
-        return out
-    out.update(key=sheet["subclass"], name=sc["name"], source=sc["source"])
-    if sc["class"] != cls:
-        out["warnings"].append(f"{sc['name']} is a {sc['class'].title()} subclass, but the class is {cls.title() or 'not set'}.")
-        return out
-    new = SUPERSEDED.get(sheet["subclass"])
+        return None
+    info = {"key": key, "name": sc["name"], "source": sc["source"], "class": sc["class"], "features": [], "spells": {}, "summons": []}
+    if sc["class"] != c["cls"]:
+        out["warnings"].append(f"{sc['name']} is a {sc['class'].title()} subclass, but the class is {c['cls'].title() or 'not set'}.")
+        return info
+    new = SUPERSEDED.get(key)
     if new:
         n = SUBCLASSES[new]
         out["warnings"].append(f"Older version: {sc['name']} ({sc['source']}) has a 2024 version, {n['name']} ({n['source']}).")
-    if level < sc["level"]:
+    if c["level"] < sc["level"]:
         out["warnings"].append(f"{sc['name']} starts at {sc['class'].title()} level {sc['level']}.")
-    _features(sc["features"], level, choices, out["features"], out, v)
-    return out
+    spells_before = {lv: list(n) for lv, n in out["spells"].items()}
+    summons_before = len(out["summons"])
+    _features(sc["features"], c["level"], choices, info["features"], out, v)
+    info["spells"] = {lv: names[len(spells_before.get(lv, [])):] for lv, names in out["spells"].items() if names[len(spells_before.get(lv, [])):]}
+    info["summons"] = out["summons"][summons_before:]
+    return info
 
 
 def feat_keys(sheet):
@@ -184,14 +215,15 @@ def origin_catalog():
     }
 
 
-def score_boosts(cls, level):
+def score_boosts(cls, level, classes=None):
     """Ability score increases from class features (Primal Champion, Body and Mind): ({ability: n}, cap)."""
     boosts, cap = {}, 20
-    for f in CLASS_FEATURES.get(cls, []):
-        if level >= f["level"] and f.get("scores"):
-            for a, n in f["scores"].items():
-                boosts[a] = boosts.get(a, 0) + n
-            cap = max(cap, f.get("score_max", 20))
+    for c in classes or [{"cls": cls, "level": level}]:
+        for f in CLASS_FEATURES.get(c["cls"], []):
+            if c["level"] >= f["level"] and f.get("scores"):
+                for a, n in f["scores"].items():
+                    boosts[a] = boosts.get(a, 0) + n
+                cap = max(cap, f.get("score_max", 20))
     return boosts, cap
 
 

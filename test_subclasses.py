@@ -309,6 +309,34 @@ class OnTheSheet(unittest.TestCase):
         self.assertEqual({k: sp[k] for k in ("name", "level", "save", "dice", "type", "attack", "ref")},
                          {"name": "Fireball", "level": 3, "save": "dex", "dice": "8d6", "type": "fire", "attack": False, "ref": "spell:fireball"})
 
+    def test_multiclassing(self):
+        s = char("fighter", 5, "champion-2024", str=16, dex=14, wis=14)
+        s["multiclass"] = [{"class_name": "Rogue", "level": 3, "subclass": "thief-2024"}, {"class_name": "Cleric", "level": 2}]
+        d = rules.derive(s)
+        self.assertEqual((d["level"], d["prof_bonus"], d["class_line"]), (10, 4, "Fighter 5 / Rogue 3 / Cleric 2"))
+        self.assertEqual(d["class_levels"], {"fighter": 5, "rogue": 3, "cleric": 2})
+        self.assertEqual(d["sneak_attack"], "2d6")                                   # Rogue level 3
+        self.assertEqual([x["name"] for x in d["subclasses"]], ["Champion", "Thief"])
+        self.assertEqual(d["subclass"]["name"], "Champion")
+        self.assertEqual(d["suggested_slots"][:2], [3, 0])                           # one caster: Cleric 2's own table
+        keys = {r["key"] for r in d["resources"]}
+        self.assertTrue({"second_wind", "action_surge", "channel_divinity"} <= keys)
+        self.assertEqual([p for p in ("str", "con", "dex", "wis") if d["saves"][p]["proficient"]], ["str", "con"])   # first class's saves only
+        self.assertEqual(d["hit_dice"]["pools"], [{"die": 10, "total": 5, "left": 5}, {"die": 8, "total": 5, "left": 5}])
+        self.assertTrue(any(f.get("class") == "Rogue" and f["name"] == "Sneak Attack" for f in d["class_features"]))
+
+    def test_multiclass_spell_slots_and_profs(self):
+        s = char("wizard", 3)
+        s["multiclass"] = [{"class_name": "Paladin", "level": 3}, {"class_name": "Warlock", "level": 2}]
+        d = rules.derive(s)
+        # caster level 3 + ceil(3/2) = 5: 4/3/2 slots; Warlock 2 adds two 1st-level Pact slots
+        self.assertEqual(d["suggested_slots"][:4], [6, 3, 2, 0])
+        s["inventory"] = [{"uid": "c", "name": "Chain Shirt", "type": "armor", "equipped": True, "armor": {"category": "Medium", "base": 13, "str_min": 0}}]
+        self.assertFalse([w for w in rules.derive(s)["warnings"] if "Not proficient" in w])   # Paladin multiclass: medium armor
+        ek = char("fighter", 6, "eldritch-knight-2024")
+        ek["multiclass"] = [{"class_name": "Wizard", "level": 3}]
+        self.assertEqual(rules.derive(ek)["suggested_slots"][:3], [4, 3, 2])       # caster level 3 + 6 // 3 = 5
+
     def test_wrong_class_or_level_warns(self):
         self.assertTrue([w for w in rules.derive(char("wizard", 5, "champion-2024"))["warnings"] if "Fighter subclass" in w])
         self.assertTrue([w for w in rules.derive(char("fighter", 2, "champion-2024"))["warnings"] if "starts at" in w])
