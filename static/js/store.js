@@ -11,7 +11,7 @@ export const S = {
   entryCache: new Map(),      // "kind:idx" -> reference entry
   view: 'combat',
   // combat view
-  sel: null,                  // { type: 'c', id } | { type: 'entry', kind, idx } | { type: 'char', id }
+  sel: null,                  // { type: 'c', id } | { type: 'entry', kind, idx } | { type: 'char', id } | { type: 'fight', id }
   libKind: 'monster',
   editingSlots: new Set(),    // combatant ids with the slot editor open (UI only, never saved)
   targets: new Map(),         // combatant id -> { half, mod }: ticked for area damage (UI only, never saved)
@@ -27,7 +27,8 @@ export const S = {
   curMon: null,               // { idx, data }
   // two-step confirmations ("click again to …")
   confirm: { del: null, clear: false, delChar: null, delMon: null, delFight: null, delPage: null, delImg: null },
-  saved: [],                  // saved encounters, as last loaded
+  saved: [],                  // saved encounters (prepared fights), as last loaded; fights open in the planner are the live objects
+  savedLoaded: false,
   // wiki view
   wiki: {
     pages: [], categories: [], trash: 0,   // the page list (no bodies) and the trash count, from /api/wiki

@@ -123,17 +123,22 @@ class SavedEncounters(TempData):
             {"name": "", "kind": "foe"}]}), {})
         self.assertEqual(made["name"], "Goblin ambush")
         self.assertEqual(made["creatures"], [{"ref": "monster:goblin-warrior", "name": "Goblin Warrior", "kind": "foe", "xp": 50, "hp": 0}])
+        self.assertEqual(made["notes"], "")
         server.update_saved(_Body({"name": "Ambush", "creatures": made["creatures"] * 2}), {}, str(made["id"]))
         listed = server.list_saved(None, {})
         self.assertEqual([(e["name"], len(e["creatures"])) for e in listed], [("Ambush", 2)])
         server.delete_saved(None, {}, str(made["id"]))
         self.assertEqual(server.list_saved(None, {}), [])
 
-    def test_name_and_creatures_are_required(self):
+    def test_a_prepared_fight_can_start_empty_and_keeps_notes(self):
+        made = server.create_saved(_Body({"name": "Bridge", "creatures": [], "notes": "Trolls under the bridge"}), {})
+        self.assertEqual((made["creatures"], made["notes"]), ([], "Trolls under the bridge"))
+        listed = server.list_saved(None, {})
+        self.assertEqual([(e["name"], e["notes"]) for e in listed], [("Bridge", "Trolls under the bridge")])
+
+    def test_name_is_required(self):
         with self.assertRaises(server.ApiError):
             server.create_saved(_Body({"name": "", "creatures": [{"name": "Orc"}]}), {})
-        with self.assertRaises(server.ApiError):
-            server.create_saved(_Body({"name": "Empty", "creatures": []}), {})
         with self.assertRaises(server.ApiError):
             server.update_saved(_Body({"name": "Gone", "creatures": [{"name": "Orc"}]}), {}, "99")
 

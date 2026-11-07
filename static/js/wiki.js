@@ -324,7 +324,8 @@ async function openRefDialog(r) {
     const counts = {};
     for (const c of f?.creatures || []) { const n = String(c.name).replace(/\s+\d+$/, ''); counts[n] = (counts[n] || 0) + 1; }
     body = `<div class="ins-head"><h2>${esc(r.title)}</h2><p>Saved fight</p></div>
-      <ul class="linklist">${Object.entries(counts).map(([n, k]) => `<li>${k > 1 ? `${k}× ` : ''}${esc(n)}</li>`).join('') || '<li class="hint">No creatures.</li>'}</ul>`;
+      <ul class="linklist">${Object.entries(counts).map(([n, k]) => `<li>${k > 1 ? `${k}× ` : ''}${esc(n)}</li>`).join('') || '<li class="hint">No creatures.</li>'}</ul>
+      ${f?.notes ? `<p class="prose fightnotes">${esc(f.notes)}</p>` : ''}`;
   }
   dlg.innerHTML = `<div class="refbody">${body}</div>
     <div class="line"><span class="hint">${r.kind === 'monster' ? 'Uses the count and HP setting in the combat library.' : 'Adds them to the tracker.'}</span><span class="spacer"></span>

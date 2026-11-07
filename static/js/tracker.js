@@ -2,6 +2,7 @@
 
 import * as R from './combat.js';
 import { d20, doubleDice, parseAmount, roll } from './dice.js';
+import { addMonsterToFight, initFights, loadSaved, newFight, openFight, renderPlan } from './fights.js';
 import { bindForm } from './forms.js';
 import { createHistory } from './history.js';
 import { switchView } from './nav.js';
@@ -483,6 +484,7 @@ export async function renderInspector() {
     }
     return;
   }
+  if (sel.type === 'fight') return renderPlan(box);
   if (sel.type === 'char') {
     const ch = S.chars.get(sel.id);
     box.innerHTML = ch ? `<div class="ins-head"><h2>${esc(ch.sheet.name)}</h2><p>${esc(classLine(ch.sheet))}</p></div><div id="wikiHost"></div>${derivedHtml(ch, { compact: true })}` : '';
@@ -495,8 +497,11 @@ export async function renderInspector() {
     if (S.sel !== sel) return;                    // the selection changed while loading
     if (sel.kind === 'monster') {
       box.innerHTML = `<div class="ins-head"><h2>${esc(d.name)}</h2><p>${esc(monsterLine(d))}</p></div>
-        <div class="line"><button class="btn primary" data-addmon="${esc(sel.idx)}">Add to combat</button><span class="hint">Uses the count and HP setting in the library.</span></div><div id="wikiHost"></div>${statBlock(d)}`;
+        <div class="line"><button class="btn primary" data-addmon="${esc(sel.idx)}">Add to combat</button><span class="hint">Uses the count and HP setting in the library.</span></div>
+        <div class="line"><label class="hint">Prepare: <select class="field" id="toFight" data-idx="${esc(sel.idx)}" aria-label="Add to a prepared fight">${fightOptions()}</select></label></div>
+        <div id="wikiHost"></div>${statBlock(d)}`;
       showMentions($('#wikiHost'), 'monster', d.name);
+      if (!S.savedLoaded) loadSaved().then(() => { S.savedLoaded = true; const el = $('#toFight'); if (el) el.innerHTML = fightOptions(); }, () => {});
     } else if (sel.kind === 'spell') box.innerHTML = spellHtml(d);
     else if (sel.kind === 'condition') box.innerHTML = `<div class="ins-head"><h2>${esc(d.name)}</h2></div><div class="prose">${mdLite(d.desc)}</div>`;
     else box.innerHTML = itemHtml(sel.kind, sel.idx, d, [...S.chars.values()]);
@@ -1135,26 +1140,32 @@ async function onInspectClick(e) {
 
 // ---------- saved encounters (prepared fights) ----------
 
-const baseName = n => String(n).replace(/\s+\d+$/, '');
-const fightXp = list => list.reduce((n, c) => n + (c.kind === 'foe' ? +c.xp || 0 : 0), 0);
+const baseName = R.baseName;
+const fightXp = R.foeXp;
+
+/** Choices for "Prepare: add to a fight" on a monster's stat block. */
+const fightOptions = () => '<option value="">Add to a prepared fight…</option>'
+  + (S.saved || []).map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join('') + '<option value="new">New fight…</option>';
 
 async function renderSaved(q) {
   const ul = $('#libResults');
   const own = S.enc.c.filter(c => c.kind !== 'pc');
-  const form = `<li class="savefight"><input class="field" id="saveName" placeholder="Name this fight" aria-label="Name for the saved fight" autocomplete="off">
-    <button class="btn sm primary" data-savefight ${own.length ? '' : 'disabled'} title="Saves the foes and allies in the tracker (not the party)">Save current</button></li>`;
+  const form = `<li class="savefight"><input class="field" id="saveName" placeholder="Name a fight" aria-label="Name for the fight" autocomplete="off">
+    <button class="btn sm primary" data-newfight title="Prepare a new fight in the inspector, without touching the tracker">New</button>
+    <button class="btn sm" data-savefight ${own.length ? '' : 'disabled'} title="Save the foes and allies in the tracker (not the party) as a fight">From tracker</button></li>`;
   try {
-    S.saved = await api('/api/saved-encounters');
+    S.saved = await loadSaved();
+    S.savedLoaded = true;
   } catch (e) { ul.innerHTML = form + `<li class="empty">${esc(e.message)}</li>`; return; }
   const list = S.saved.filter(f => f.name.toLowerCase().includes(q.toLowerCase()));
   ul.innerHTML = form + (list.map(f => {
-    const counts = Object.entries(f.creatures.reduce((m, c) => ({ ...m, [baseName(c.name)]: (m[baseName(c.name)] || 0) + 1 }), {}))
-      .map(([n, k]) => (k > 1 ? `${k}× ${n}` : n)).join(', ');
+    const counts = R.fightGroups(f.creatures).map(g => `${g.n > 1 ? `${g.n}× ` : ''}${g.name}${g.kind === 'ally' ? ' (ally)' : ''}`).join(', ') || 'No creatures yet';
     const xp = fightXp(f.creatures);
-    return `<li><button class="r-main" data-loadfight="${f.id}" title="Add these creatures to the tracker"><span class="r-name">${esc(f.name)}</span><span class="r-meta">${esc(counts)}${xp ? ` · ${xp.toLocaleString()} XP` : ''}</span></button>
-      <button class="add" data-loadfight="${f.id}" title="Add to combat">+</button>
-      <button class="add del" data-delfight="${f.id}" title="${S.confirm.delFight === f.id ? 'Click again to delete' : 'Delete this saved fight'}">${S.confirm.delFight === f.id ? '?' : '×'}</button></li>`;
-  }).join('') || `<li class="empty">${S.saved.length ? `Nothing matches "${esc(q)}".` : 'No saved fights yet. Add foes to the tracker, name the fight above and save it.'}</li>`);
+    const isSel = S.sel?.type === 'fight' && S.sel.id === f.id;
+    return `<li class="${isSel ? 'sel' : ''}"><button class="r-main" data-openfight="${f.id}" title="Open in the inspector to prepare it"><span class="r-name">${esc(f.name)}</span><span class="r-meta">${esc(counts)}${xp ? ` · ${xp.toLocaleString()} XP` : ''}</span></button>
+      <button class="add" data-loadfight="${f.id}" title="Add to combat"${f.creatures.length ? '' : ' disabled'}>+</button>
+      <button class="add del" data-delfight="${f.id}" title="${S.confirm.delFight === f.id ? 'Click again to delete' : 'Delete this fight'}">${S.confirm.delFight === f.id ? '?' : '×'}</button></li>`;
+  }).join('') || `<li class="empty">${S.saved.length ? `Nothing matches "${esc(q)}".` : 'No fights yet. Name one above and press New to prepare it, or save the foes in the tracker with From tracker.'}</li>`);
 }
 
 async function saveFight() {
@@ -1165,8 +1176,11 @@ async function saveFight() {
   }));
   const existing = (S.saved || []).find(f => f.name.toLowerCase() === name.toLowerCase());
   try {
-    if (existing) await api(`/api/saved-encounters/${existing.id}`, { method: 'PUT', body: { name, creatures } });
-    else await api('/api/saved-encounters', { method: 'POST', body: { name, creatures } });
+    if (existing) {
+      existing.creatures = creatures;          // the same object the planner shows, if it's open there
+      await api(`/api/saved-encounters/${existing.id}`, { method: 'PUT', body: { name, creatures, notes: existing.notes || '' } });
+      if (S.sel?.type === 'fight' && S.sel.id === existing.id) renderInspector();
+    } else await api('/api/saved-encounters', { method: 'POST', body: { name, creatures, notes: '' } });
     toast(`${existing ? 'Updated' : 'Saved'} "${name}" (${creatures.length} creature${creatures.length > 1 ? 's' : ''}).`);
   } catch (e) { toast(e.message); }
   doSearch();
@@ -1175,7 +1189,7 @@ async function saveFight() {
 /** Add a saved fight's creatures from elsewhere (the wiki), loading the saved fights first if needed. */
 export async function addFight(id) {
   if (!(S.saved || []).some(f => f.id === id)) {
-    try { S.saved = await api('/api/saved-encounters'); } catch (e) { return toast(e.message); }
+    try { await loadSaved(); } catch (e) { return toast(e.message); }
   }
   return loadFight(id);
 }
@@ -1183,6 +1197,7 @@ export async function addFight(id) {
 async function loadFight(id) {
   const f = (S.saved || []).find(x => x.id === id);
   if (!f) return;
+  if (!f.creatures.length) return toast(`"${f.name}" has no creatures yet.`);
   const rollHp = $('#libRollHp').checked;
   let entries;
   try {
@@ -1204,8 +1219,22 @@ async function loadFight(id) {
   toast(`Added "${f.name}": ${added.map(c => `${c.name} ${c.init}`).join(', ')}.${waiting}`);
 }
 
+/** "Prepare: add to a fight" on a monster's stat block: adds the library's count to that fight, or to a new one. */
+async function toFight(el) {
+  const v = el.value, idx = el.dataset.idx;
+  el.value = '';
+  if (!v) return;
+  const qty = Math.max(1, Math.min(20, parseInt($('#libQty').value, 10) || 1));
+  if (v !== 'new') return addMonsterToFight(+v, idx, qty);
+  const made = await newFight($('#saveName')?.value || 'New fight');
+  if (made) await addMonsterToFight(made.id, idx, qty);
+}
+
 function onLibraryClick(e) {
   if (e.target.closest('[data-savefight]')) return saveFight();
+  if (e.target.closest('[data-newfight]')) return newFight($('#saveName').value);
+  const openF = e.target.closest('[data-openfight]');
+  if (openF) return openFight(+openF.dataset.openfight);
   const load = e.target.closest('[data-loadfight]');
   if (load) return loadFight(+load.dataset.loadfight);
   const del = e.target.closest('[data-delfight]');
@@ -1213,7 +1242,11 @@ function onLibraryClick(e) {
     const id = +del.dataset.delfight;
     if (S.confirm.delFight === id) {
       S.confirm.delFight = null;
-      return api(`/api/saved-encounters/${id}`, { method: 'DELETE' }).then(doSearch, err => toast(err.message));
+      return api(`/api/saved-encounters/${id}`, { method: 'DELETE' }).then(() => {
+        S.saved = (S.saved || []).filter(f => f.id !== id);
+        if (S.sel?.type === 'fight' && S.sel.id === id) { S.sel = null; renderInspector(); }
+        doSearch();
+      }, err => toast(err.message));
     }
     S.confirm.delFight = id;
     return doSearch();
@@ -1293,6 +1326,7 @@ export function initCombat() {
     if (c && e.target.matches('[data-respool]') && ctx.linked(c)) { remember(`Resource for ${who(c)}`); onResourceEvent(e, ctx.linked(c)); return renderInspector(); }
     if (c && e.target.id === 'insType') { $('#insMod').value = R.defenseMod(R.defensesOf(c), e.target.value); return; }
     if (e.target.id === 'castSpell') { S.castSpell = e.target.value; return renderInspector(); }
+    if (e.target.id === 'toFight') return toFight(e.target);
     if (c && e.target.matches('[data-aura]')) return setAura(c, e.target.dataset.aura, e.target.checked);
     if (c && e.target.id === 'atkCover') { S.atk.cover[c.id] = e.target.value; return; }
     if (!c || !['atkTarget', 'atkMode'].includes(e.target.id)) return;
@@ -1339,6 +1373,7 @@ export function initCombat() {
   });
   $('#libSearch').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(doSearch, 140); });
   $('#libResults').addEventListener('click', onLibraryClick);
+  initFights({ addToCombat: id => loadFight(id), refreshLibrary: doSearch, renderInspector });
 
   $('#nextBtn').onclick = () => step(1);
   $('#prevBtn').onclick = () => step(-1);

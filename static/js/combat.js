@@ -942,6 +942,28 @@ export function difficulty(levels, xp) {
   return { low, moderate, high, xp, rating };
 }
 
+/** "Goblin 3" -> "Goblin": a numbered creature's name without its number. */
+export const baseName = n => String(n).replace(/\s+\d+$/, '');
+
+/** XP of the foes in a list of creatures (allies give none). */
+export const foeXp = list => list.reduce((n, c) => n + (c.kind === 'foe' ? +c.xp || 0 : 0), 0);
+
+/**
+ * A prepared fight's creatures, grouped for the planner: the same creature on the same side counts as one row.
+ * Returns [{ key, name, kind, ref, n, xp, idx: [positions in the list] }] in the order they first appear.
+ */
+export function fightGroups(list) {
+  const groups = new Map();
+  list.forEach((c, i) => {
+    const name = c.ref ? baseName(c.name) : String(c.name);
+    const key = `${c.ref || `custom:${name.toLowerCase()}`}|${c.kind === 'ally' ? 'ally' : 'foe'}`;
+    if (!groups.has(key)) groups.set(key, { key, name, kind: c.kind === 'ally' ? 'ally' : 'foe', ref: c.ref || null, n: 0, xp: 0, idx: [] });
+    const g = groups.get(key);
+    g.n++; g.xp += +c.xp || 0; g.idx.push(i);
+  });
+  return [...groups.values()];
+}
+
 /** What happened in the fight, for the summary when combat ends. XP for defeated foes is split between the PCs. */
 export function summary(ctx) {
   const { enc } = ctx;

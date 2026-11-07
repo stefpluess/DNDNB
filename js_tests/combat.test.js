@@ -739,3 +739,20 @@ test('a turn change with a missing active creature restarts cleanly instead of c
   assert.equal(ctx.enc.active, a.id);
   assert.equal(ctx.enc.round, 1);
 });
+
+// ---------- prepared fights ----------
+
+test('a prepared fight groups the same creature on the same side', () => {
+  const list = [
+    { ref: 'monster:goblin', name: 'Goblin Warrior', kind: 'foe', xp: 50 },
+    { name: 'Bandit captain', kind: 'foe', xp: 450 },
+    { ref: 'monster:goblin', name: 'Goblin Warrior 2', kind: 'foe', xp: 50 },
+    { ref: 'monster:goblin', name: 'Goblin Warrior', kind: 'ally', xp: 50 },
+    { name: 'bandit Captain', kind: 'foe', xp: 450 },
+  ];
+  const g = R.fightGroups(list);
+  assert.deepEqual(g.map(x => [x.name, x.kind, x.n, x.idx]), [
+    ['Goblin Warrior', 'foe', 2, [0, 2]], ['Bandit captain', 'foe', 2, [1, 4]], ['Goblin Warrior', 'ally', 1, [3]]]);
+  assert.equal(R.foeXp(list), 1000);       // the allied goblin gives no XP
+  assert.equal(R.baseName('Goblin Warrior 12'), 'Goblin Warrior');
+});

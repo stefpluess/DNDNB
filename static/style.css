@@ -278,6 +278,22 @@ button.chip:hover{border-color:var(--bad)}
 .atkres.hit{border-left-color:var(--bad)}
 .atkhint{color:var(--warn);margin:2px 0}
 
+/* fight planner (a prepared fight in the inspector) */
+.planname{display:flex;flex-direction:column;gap:4px;font-size:.85rem;color:var(--muted)}
+.planlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.planlist>li{border-bottom:1px solid var(--line);padding:6px 0;border-left:3px solid var(--foe);padding-left:8px}
+.planlist>li.k-ally{border-left-color:var(--ally)}
+.pl-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.pl-name{font-weight:700;font-size:1rem;text-align:left;flex:1 1 8rem;min-width:0}
+.pl-stats{flex:1 1 100%;order:5;font-size:.8rem}
+.pl-count{display:inline-flex;align-items:center;gap:6px}
+.pl-count b{min-width:1.6em;text-align:center;font-variant-numeric:lining-nums tabular-nums}
+.pl-sb{margin-top:8px}
+.fightnotes{white-space:pre-wrap}
+.itemsearch.grow{flex:1 1 12rem}
+#planCustom.addgrid{grid-template-columns:repeat(4,minmax(0,1fr))}
+#planCustom.addgrid .w2{grid-column:span 2}
+
 /* ---------- stat blocks (inspector and Bestiary preview) ---------- */
 .statblock{display:flex;flex-direction:column;gap:10px}
 .props{display:flex;flex-direction:column;gap:3px;font-size:.9rem}

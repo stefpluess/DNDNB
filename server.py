@@ -293,9 +293,11 @@ def _clean_saved(body):
         if not isinstance(c, dict) or not str(c.get("name") or "").strip():
             continue
         creatures.append({k: c[k] for k in SAVED_FIELDS if k in c})
-    if not creatures:
-        raise ApiError("There are no foes or allies to save.")
-    return name[:120], {"creatures": creatures}
+    if len(creatures) > 200:
+        raise ApiError("A fight can hold at most 200 creatures.")
+    # a fight being prepared may have no creatures yet; notes are the DM's plan (terrain, tactics, treasure)
+    notes = str(body.get("notes") or "")[:20000]
+    return name[:120], {"creatures": creatures, "notes": notes}
 
 
 def list_saved(_req, _q):

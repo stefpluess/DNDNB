@@ -20,6 +20,10 @@ In the browser console, `ledger.S` shows the app state and `ledger.combat` the c
 ## Features
 - Combat view: SRD and homebrew monster library, initiative tracker, inspector with full 2024
   stat blocks and clickable rolls, roll log.
+- Fights (combat library tab): prepare fights in advance. New opens the fight planner in the inspector
+  (`fights.js`): monsters (search, or "Prepare" on a stat block) and custom creatures, counts, foe/ally, notes,
+  difficulty against the whole party; saved as you go, the tracker isn't touched until Add to combat.
+  "From tracker" saves the tracker's foes and allies as a fight.
 - Party view: character sheets. The server calculates AC (with breakdown), attacks, saves,
   skills and spell DC from ability scores, proficiencies and equipped gear.
 - Bestiary view: homebrew creature editor (new, or copied from an SRD monster), live stat block,
@@ -66,7 +70,7 @@ Front end, `static/js/` (plain ES modules, no framework):
   death saves, conditions, exhaustion, group naming)
 - `dice.js`, `autosave.js`, `forms.js`: dice parsing, ordered debounced saving, form binding
 - `history.js`: undo/redo stack used by the combat view
-- `tracker.js`, `party.js`, `bestiary.js`, `wiki.js`: the four views
+- `tracker.js`, `party.js`, `bestiary.js`, `wiki.js`: the four views; `fights.js`: the fight planner (combat inspector)
 - `markdown.js`: wiki page Markdown to HTML (escapes everything; link syntax matches `wiki.LINK`)
 - `statblock.js`, `sheetview.js`: stat blocks, spells, items, computed character stats
 - `ui.js`, `nav.js`, `util.js`: roll log, view switching, helpers (`esc`, `signed`, `setPath`, `toast`)
