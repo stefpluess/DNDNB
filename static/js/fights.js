@@ -164,9 +164,137 @@ export function renderPlan(box) {
         </form></details></div>
     <div class="blk"><h4>Notes</h4><textarea class="field" id="planNotes" data-path="notes" rows="5" placeholder="Where and how it starts, terrain, tactics, treasure…">${esc(f.notes || '')}</textarea></div>
     <div class="acts" id="planActs"><button class="btn primary" data-plan="combat" title="Add these creatures to the tracker (uses Roll HP and Surprised from the library)">Add to combat</button>
+      <button class="btn sm" data-plan="text" title="Copy this fight as text: for another chat, a wiki page or another computer (Import reads it back)">Copy as text</button>
       <button class="btn sm" data-plan="dup">Duplicate</button>
       <button class="btn sm bad" data-plan="del">${sure ? 'Click again to delete' : 'Delete'}</button></div>`;
   renderPlanBody();
+}
+
+// ---------- import and export as text ----------
+
+/** What to ask another Claude chat (or anyone) for, so their fights paste straight in. */
+export const IMPORT_PROMPT = `Please write the fights we prepared in this format, so I can paste them into my battle tracker (D&D 2024 rules, SRD 5.2). Put all of them in one code block.
+
+# Name of the fight
+3 Goblin Warrior
+1 Bugbear Warrior
+Ally: 2 Guard
+Bandit Boss (HP 65, AC 15, XP 450, Init +2)
+Notes:
+Everything for me as the DM: where and how it starts, terrain, tactics, treasure.
+
+Rules:
+- One fight per "#" heading, one creature per line, the count first.
+- Use the exact English monster names from the SRD 5.2 (2024 rules), e.g. "Goblin Warrior" (not "Goblin", not translated names).
+- For a creature that isn't in the SRD 5.2, put its stats in brackets: (HP …, AC …, XP …, Init …).
+- Creatures on the party's side get "Ally:" in front.
+- The notes come last: every line after "Notes:" belongs to them.`;
+
+const STATUS = {
+  srd: r => `<span class="imp-ok">✓</span> ${esc(r.match)} <span class="hint">SRD</span>`,
+  homebrew: r => `<span class="imp-ok">✓</span> ${esc(r.match)} <span class="hint">homebrew</span>`,
+  custom: () => '<span class="imp-ok">✓</span> <span class="hint">custom creature with the stats given</span>',
+  missing: r => `<span class="imp-bad">✗ not found, left out</span>${r.suggest.length ? ` <span class="hint">did you mean</span> ${r.suggest.map(n =>
+    `<button class="link" data-impfix="${esc(r.name)}" data-line="${r.line ?? ''}" data-to="${esc(n)}" title="Use this name in the text">${esc(n)}</button>`).join(', ')}` : ' <span class="hint">(add stats in brackets to make it a custom creature)</span>'}`,
+};
+
+let impTimer, impSeq = 0, impFights = [];
+
+function previewHtml(fights) {
+  return fights.map(f => `<div class="imp-fight"><h4>${esc(f.name)} <span class="hint">${f.total} creature${f.total === 1 ? '' : 's'}${f.notes ? ' · notes' : ''}</span></h4>
+    <ul>${f.rows.map(r => `<li class="${r.status === 'missing' ? 'missing' : ''}"><b>${r.count}× ${esc(r.name)}</b>${r.kind === 'ally' ? ' <span class="hint">(ally)</span>' : ''} → ${STATUS[r.status](r)}</li>`).join('')
+      || '<li class="hint">No creatures.</li>'}</ul>
+    ${f.notes ? `<p class="hint imp-notes">${esc(f.notes.length > 160 ? `${f.notes.slice(0, 160)}…` : f.notes)}</p>` : ''}</div>`).join('');
+}
+
+/** Ask the server how the pasted text reads (nothing is saved yet). */
+async function checkImport() {
+  const text = $('#impText').value, seq = ++impSeq, out = $('#impPreview'), go = $('#impDlgSave');
+  impFights = [];
+  go.disabled = true; go.textContent = 'Import';
+  if (!text.trim()) { out.innerHTML = ''; return; }
+  try {
+    const res = await api('/api/saved-encounters/import', { method: 'POST', body: { text } });
+    if (seq !== impSeq) return;                                    // newer typing already asked again
+    impFights = res.fights.filter(f => f.total || f.notes);
+    out.innerHTML = previewHtml(res.fights);
+    const missing = res.fights.reduce((n, f) => n + f.missing, 0);
+    go.disabled = !impFights.length;
+    go.textContent = `Import ${impFights.length} fight${impFights.length === 1 ? '' : 's'}${missing ? ` (${missing} line${missing > 1 ? 's' : ''} left out)` : ''}`;
+  } catch (e) {
+    if (seq === impSeq) out.innerHTML = `<p class="hint">${esc(e.message)}</p>`;
+  }
+}
+
+export function openImport(text = '') {
+  const dlg = $('#importDlg');
+  dlg.innerHTML = `<h2 id="importTitle">Import fights</h2>
+    <p class="hint">Paste fights prepared in another Claude chat, in your notes, or exported from here: one creature per line, with a count. Nothing is saved until you press Import.</p>
+    <details class="imp-fmt"><summary>Ask Claude for this format</summary>
+      <p class="hint">Paste this into the other chat, then copy its answer here.</p>
+      <pre id="impPrompt">${esc(IMPORT_PROMPT)}</pre>
+      <div class="line"><button class="btn sm" data-imp="copyprompt">Copy</button></div></details>
+    <textarea class="field" id="impText" rows="10" spellcheck="false" placeholder="# Goblin ambush&#10;3 Goblin Warrior&#10;Ally: 2 Guard&#10;Notes:&#10;They wait in the reeds.">${esc(text)}</textarea>
+    <div class="line"><label class="btn sm">Open a file…<input type="file" id="impFile" accept=".txt,.md,.json,text/plain,application/json" hidden></label>
+      <span class="hint">.txt, .md or .json</span></div>
+    <div class="imp-preview" id="impPreview"></div>
+    <div class="line"><span class="spacer"></span><button class="btn" data-imp="close">Cancel</button><button class="btn primary" id="impDlgSave" data-imp="save" disabled>Import</button></div>`;
+  dlg.showModal();
+  $('#impText').focus();
+  if (text) checkImport();
+}
+
+async function saveImport() {
+  const text = $('#impText').value;
+  try {
+    const res = await api('/api/saved-encounters/import', { method: 'POST', body: { text, save: true } });
+    $('#importDlg').close();
+    await loadSaved().catch(() => {});
+    toast(`Imported ${res.created.map(f => `"${f.name}"`).join(', ')}.`);
+    if (res.created.length) await openFight(res.created[0].id);
+    else if (S.libKind === 'saved') hooks.refreshLibrary();
+  } catch (e) { toast(e.message); }
+}
+
+/** Copy the open fight as text (the format the import reads), for another chat, a wiki page or another computer. */
+async function copyAsText(f) {
+  await flushFight(f.id);
+  try {
+    const { text } = await api(`/api/saved-encounters/${f.id}/text`);
+    await navigator.clipboard.writeText(text);
+    toast(`Copied "${f.name}" as text.`);
+  } catch (e) { toast(`Could not copy: ${e.message}`); }
+}
+
+function initImport() {
+  const dlg = $('#importDlg');
+  dlg.addEventListener('input', e => {
+    if (e.target.id === 'impText') { clearTimeout(impTimer); impTimer = setTimeout(checkImport, 350); }
+  });
+  dlg.addEventListener('change', async e => {
+    if (e.target.id !== 'impFile' || !e.target.files[0]) return;
+    const file = e.target.files[0];
+    if (file.size > 500000) return toast('That file is too big for a list of fights.');
+    $('#impText').value = await file.text();
+    checkImport();
+  });
+  dlg.addEventListener('click', async e => {
+    const fix = e.target.closest('[data-impfix]');
+    if (fix) {                       // a suggestion: put that name in the creature's line (in JSON: its quoted name)
+      const from = fix.dataset.impfix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), to = fix.dataset.to;
+      const ta = $('#impText'), lines = ta.value.split('\n'), at = fix.dataset.line === '' ? -1 : +fix.dataset.line;
+      if (at >= 0 && at < lines.length) lines[at] = lines[at].replace(new RegExp(`(?<!\\p{L})${from}(?!\\p{L})`, 'u'), to);
+      else lines.forEach((l, i) => { lines[i] = l.replace(new RegExp(`"${from}"`, 'g'), JSON.stringify(to)); });
+      ta.value = lines.join('\n');
+      return checkImport();
+    }
+    const a = e.target.closest('[data-imp]')?.dataset.imp;
+    if (a === 'close') dlg.close();
+    else if (a === 'save') saveImport();
+    else if (a === 'copyprompt') {
+      navigator.clipboard.writeText(IMPORT_PROMPT).then(() => toast('Copied. Paste it into the other chat.'), err => toast(`Could not copy: ${err.message}`));
+    }
+  });
 }
 
 // ---------- events ----------
@@ -205,6 +333,8 @@ async function onClick(e) {
   else if (a === 'combat') {
     await flushFight(f.id);
     return hooks.addToCombat(f.id);
+  } else if (a === 'text') {
+    return copyAsText(f);
   } else if (a === 'dup') {
     await flushFight(f.id);
     return newFight(`${f.name} (copy)`, f.creatures.map(c => ({ ...c })));
@@ -259,6 +389,7 @@ function onSubmit(e) {
  */
 export function initFights(h) {
   hooks = { ...hooks, ...h };
+  initImport();
   const box = $('#inspect');
   box.addEventListener('click', onClick);
   box.addEventListener('change', onChange);

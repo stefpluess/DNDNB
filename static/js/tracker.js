@@ -2,7 +2,7 @@
 
 import * as R from './combat.js';
 import { d20, doubleDice, parseAmount, roll } from './dice.js';
-import { addMonsterToFight, initFights, loadSaved, newFight, openFight, renderPlan } from './fights.js';
+import { addMonsterToFight, initFights, loadSaved, newFight, openFight, openImport, renderPlan } from './fights.js';
 import { bindForm } from './forms.js';
 import { createHistory } from './history.js';
 import { switchView } from './nav.js';
@@ -1152,7 +1152,8 @@ async function renderSaved(q) {
   const own = S.enc.c.filter(c => c.kind !== 'pc');
   const form = `<li class="savefight"><input class="field" id="saveName" placeholder="Name a fight" aria-label="Name for the fight" autocomplete="off">
     <button class="btn sm primary" data-newfight title="Prepare a new fight in the inspector, without touching the tracker">New</button>
-    <button class="btn sm" data-savefight ${own.length ? '' : 'disabled'} title="Save the foes and allies in the tracker (not the party) as a fight">From tracker</button></li>`;
+    <button class="btn sm" data-savefight ${own.length ? '' : 'disabled'} title="Save the foes and allies in the tracker (not the party) as a fight">From tracker</button></li>
+    <li class="savefight"><button class="btn sm" data-importfights title="Paste fights from another Claude chat, your notes or a file">Import…</button><span class="hint">from another chat, notes or a file</span></li>`;
   try {
     S.saved = await loadSaved();
     S.savedLoaded = true;
@@ -1165,7 +1166,7 @@ async function renderSaved(q) {
     return `<li class="${isSel ? 'sel' : ''}"><button class="r-main" data-openfight="${f.id}" title="Open in the inspector to prepare it"><span class="r-name">${esc(f.name)}</span><span class="r-meta">${esc(counts)}${xp ? ` · ${xp.toLocaleString()} XP` : ''}</span></button>
       <button class="add" data-loadfight="${f.id}" title="Add to combat"${f.creatures.length ? '' : ' disabled'}>+</button>
       <button class="add del" data-delfight="${f.id}" title="${S.confirm.delFight === f.id ? 'Click again to delete' : 'Delete this fight'}">${S.confirm.delFight === f.id ? '?' : '×'}</button></li>`;
-  }).join('') || `<li class="empty">${S.saved.length ? `Nothing matches "${esc(q)}".` : 'No fights yet. Name one above and press New to prepare it, or save the foes in the tracker with From tracker.'}</li>`);
+  }).join('') || `<li class="empty">${S.saved.length ? `Nothing matches "${esc(q)}".` : 'No fights yet. Name one above and press New to prepare it, import some, or save the foes in the tracker with From tracker.'}</li>`);
 }
 
 async function saveFight() {
@@ -1233,6 +1234,7 @@ async function toFight(el) {
 function onLibraryClick(e) {
   if (e.target.closest('[data-savefight]')) return saveFight();
   if (e.target.closest('[data-newfight]')) return newFight($('#saveName').value);
+  if (e.target.closest('[data-importfights]')) return openImport();
   const openF = e.target.closest('[data-openfight]');
   if (openF) return openFight(+openF.dataset.openfight);
   const load = e.target.closest('[data-loadfight]');

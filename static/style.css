@@ -290,6 +290,18 @@ button.chip:hover{border-color:var(--bad)}
 .pl-count b{min-width:1.6em;text-align:center;font-variant-numeric:lining-nums tabular-nums}
 .pl-sb{margin-top:8px}
 .fightnotes{white-space:pre-wrap}
+.importdlg{width:min(760px,94vw);max-height:90vh;display:none;flex-direction:column;gap:10px}
+.importdlg[open]{display:flex}
+.importdlg p{margin:0}
+.importdlg #impText{width:100%;font-family:var(--mono);font-size:.85rem;resize:vertical;min-height:8rem}
+.imp-fmt pre{white-space:pre-wrap;font-family:var(--mono);font-size:.8rem;background:var(--surface-2);border-radius:var(--radius);padding:8px 10px;margin:6px 0;max-height:14rem;overflow-y:auto}
+.imp-preview{overflow-y:auto;min-height:0;display:flex;flex-direction:column;gap:10px}
+.imp-fight h4{margin:0 0 4px}
+.imp-fight ul{margin:0;padding-left:1.1rem;font-size:.9rem}
+.imp-fight li.missing{color:var(--bad)}
+.imp-ok{color:var(--ok);font-weight:700}
+.imp-bad{color:var(--bad);font-weight:700}
+.imp-notes{white-space:pre-wrap;margin-top:4px}
 .itemsearch.grow{flex:1 1 12rem}
 #planCustom.addgrid{grid-template-columns:repeat(4,minmax(0,1fr))}
 #planCustom.addgrid .w2{grid-column:span 2}

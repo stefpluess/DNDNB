@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 import common
 import db
+import fight_import
 import homebrew
 import rules
 import summons
@@ -328,6 +329,54 @@ def delete_saved(_req, _q, sid):
     return {"ok": True}
 
 
+def _free_name(conn, name):
+    """`name`, or "name 2", "name 3", ... if a saved fight already has it."""
+    taken = {r[0].lower() for r in conn.execute("SELECT name FROM saved_encounters")}
+    nm, i = name, 2
+    while nm.lower() in taken:
+        nm, i = f"{name} {i}", i + 1
+    return nm[:120]
+
+
+def import_saved(req, _q):
+    """{text, save}: prepared fights as text or JSON (see fight_import). Without save: a preview of how every
+    creature was matched. With save: also creates the fights (creatures not found are left out)."""
+    body = req.json_body() or {}
+    text = str(body.get("text") or "")
+    if len(text) > 500_000:
+        raise ApiError("That's too much text to import at once.")
+    fights = fight_import.parse(text)
+    if not fights:
+        raise ApiError("No fights found. Put each creature on its own line with a count, like \"3 Goblin Warrior\".")
+    with db.campaign_session() as conn:
+        hb = {" ".join(r["name"].lower().split()): dict(r) for r in conn.execute("SELECT idx, name, data FROM homebrew")}
+    with db.srd_session() as conn:
+        srd = {" ".join(r["name"].lower().split()): dict(r) for r in
+               conn.execute("SELECT idx, name, data FROM entries WHERE kind='monster' ORDER BY sort_key")}
+    preview = fight_import.resolve(fights, hb, srd)
+    created = []
+    if body.get("save"):
+        with db.campaign_session() as conn:
+            for f in preview:
+                if not f["creatures"] and not f["notes"]:
+                    continue
+                name, data = _clean_saved({"name": f["name"], "creatures": f["creatures"], "notes": f["notes"]})
+                name = _free_name(conn, name)
+                cur = conn.execute("INSERT INTO saved_encounters(name, data) VALUES (?, ?)", (name, db.dumps(data)))
+                created.append({"id": cur.lastrowid, "name": name, **data})
+    return {"fights": [{k: f[k] for k in ("name", "notes", "rows", "missing")} | {"total": len(f["creatures"])} for f in preview],
+            "created": created}
+
+
+def saved_text(_req, _q, sid):
+    """A saved fight as text that the import reads back."""
+    with db.campaign_session() as conn:
+        row = conn.execute("SELECT name, data FROM saved_encounters WHERE id=?", (int(sid),)).fetchone()
+    if not row:
+        raise ApiError("That saved encounter no longer exists.", 404)
+    return {"text": fight_import.to_text({"name": row["name"], **json.loads(row["data"])})}
+
+
 # ---------- handlers: campaign wiki ----------
 
 def _wiki(fn, *args, **kw):
@@ -441,6 +490,8 @@ ROUTES = [
     ("DELETE", r"/api/homebrew/(hb-[\w-]+)", delete_homebrew),
     ("GET", r"/api/saved-encounters", list_saved),
     ("POST", r"/api/saved-encounters", create_saved),
+    ("POST", r"/api/saved-encounters/import", import_saved),
+    ("GET", r"/api/saved-encounters/(\d+)/text", saved_text),
     ("PUT", r"/api/saved-encounters/(\d+)", update_saved),
     ("DELETE", r"/api/saved-encounters/(\d+)", delete_saved),
     ("GET", r"/api/encounter", get_encounter),
