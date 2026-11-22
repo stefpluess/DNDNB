@@ -11,7 +11,7 @@ Desktop-first (wide screens, three columns). No phone layout needed.
 python import_srd.py      # once: downloads SRD 5.2 from Open5e into data/srd.db, ends with a sanity check
 python server.py --open   # starts the app (start.bat / start.sh do both)
 
-python -m unittest test_rules test_homebrew test_server test_subclasses test_wiki   # Python tests
+python -m unittest test_rules test_homebrew test_server test_subclasses test_wiki test_fight_import   # Python tests
 node --test "js_tests/*.test.js"                          # front-end tests (Node is only needed for tests)
 ```
 Python 3.9+, standard library only. No pip packages, no build step.
@@ -20,6 +20,11 @@ In the browser console, `ledger.S` shows the app state and `ledger.combat` the c
 ## Features
 - Combat view: SRD and homebrew monster library, initiative tracker, inspector with full 2024
   stat blocks and clickable rolls, roll log.
+- Fights (combat library tab): prepare fights in advance. New opens the fight planner in the inspector
+  (`fights.js`): monsters (search, or "Prepare" on a stat block) and custom creatures, counts, foe/ally, notes,
+  difficulty against the whole party; saved as you go, the tracker isn't touched until Add to combat.
+  "From tracker" saves the tracker's foes and allies as a fight. Import… reads fights as text (from another
+  Claude chat, notes, a .txt/.md/.json file) with a preview of how each name matched; "Copy as text" exports one.
 - Party view: character sheets. The server calculates AC (with breakdown), attacks, saves,
   skills and spell DC from ability scores, proficiencies and equipped gear.
 - Bestiary view: homebrew creature editor (new, or copied from an SRD monster), live stat block,
@@ -50,6 +55,9 @@ Python (the server owns storage and all rules math for sheets and homebrew):
   `data/wiki_images/` named `<16 hex of SHA-256>.<ext>` (same picture = same file), recognized by their bytes
   (PNG/JPEG/GIF/WebP only, never SVG), listed in `wiki_images`; served by `GET /api/wiki/images/<file>`.
   Pages only ever show uploaded files, never web addresses.
+- `fight_import.py`: prepared fights as text (format in its docstring): `parse()` (text, chat answers with code
+  blocks, or JSON), `resolve()` matches names to homebrew, then SRD monsters (simple plurals too), else a custom
+  creature if stats are given, else "missing" with suggestions; `to_text()` exports so `parse()` reads it back
 - `common.py`: shared constants and formatting, served to the browser as `GET /api/meta`
 - `subclasses.py` + `subclass_data/`: the subclass engine and catalog; `summons.py`: summoned creatures
 - `import_srd.py`: Open5e importer; downloads everything before writing, never empties a category,
@@ -66,7 +74,7 @@ Front end, `static/js/` (plain ES modules, no framework):
   death saves, conditions, exhaustion, group naming)
 - `dice.js`, `autosave.js`, `forms.js`: dice parsing, ordered debounced saving, form binding
 - `history.js`: undo/redo stack used by the combat view
-- `tracker.js`, `party.js`, `bestiary.js`, `wiki.js`: the four views
+- `tracker.js`, `party.js`, `bestiary.js`, `wiki.js`: the four views; `fights.js`: the fight planner (combat inspector)
 - `markdown.js`: wiki page Markdown to HTML (escapes everything; link syntax matches `wiki.LINK`)
 - `statblock.js`, `sheetview.js`: stat blocks, spells, items, computed character stats
 - `ui.js`, `nav.js`, `util.js`: roll log, view switching, helpers (`esc`, `signed`, `setPath`, `toast`)
